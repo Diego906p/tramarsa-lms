@@ -10,7 +10,6 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <script src="https://unpkg.com/pdf-lib@1.17.1/dist/pdf-lib.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/@emailjs/browser@4/dist/email.min.js"></script>
 <style>
 :root {
   /* Paleta de marca Grupo Tramarsa */
@@ -166,7 +165,7 @@ button { font-family:inherit; cursor:pointer; }
 .toolbar-right { display:flex; gap:10px; }
 .grid-modulos { display:grid; grid-template-columns:repeat(auto-fill,minmax(270px,1fr)); gap:16px; }
 .modulo-card { background:white; border-radius:16px; border:1px solid var(--gray-100); box-shadow:var(--shadow-sm); overflow:hidden; display:flex; flex-direction:column; }
-.modulo-cover { height:100px; background:var(--blue-100); display:flex; align-items:center; justify-content:center; color:var(--blue-600); }
+.modulo-cover { aspect-ratio:16/9; width:100%; background:var(--blue-100); background-size:cover; background-position:center; display:flex; align-items:center; justify-content:center; color:var(--blue-600); }
 .modulo-body { padding:15px; flex:1; display:flex; flex-direction:column; gap:7px; }
 .modulo-body h3 { font-size:.94rem; font-weight:700; color:var(--navy-900); }
 .modulo-body p { font-size:.8rem; color:var(--gray-500); line-height:1.4; }
@@ -321,15 +320,43 @@ tr:last-child td { border-bottom:none; }
         <button type="submit" class="btn-primary">Iniciar sesión <i data-lucide="arrow-right" size="17"></i></button>
       </form>
       <button type="button" id="btnOlvidoPassword" style="background:none;border:none;color:var(--blue-600);font-size:.8rem;font-weight:600;margin-top:12px;">¿Olvidaste tu contraseña?</button>
+      <div class="hint-box hidden" id="cajaCrearAdminInicial">
+        Todavía no hay ningún administrador registrado en esta plataforma.
+        <button type="button" id="btnAbrirCrearAdmin" style="background:none;border:none;color:var(--blue-600);font-weight:700;padding:0;">Crear la cuenta de administrador inicial</button>
+      </div>
     </div>
   </section>
+</div>
+
+<!-- Modal: crear administrador inicial (solo aparece si no existe ninguno) -->
+<div class="modal-overlay" id="modalCrearAdminOverlay">
+  <div class="modal">
+    <h2>Crear administrador inicial</h2>
+    <p style="font-size:.82rem;color:var(--gray-500);margin-bottom:14px;">Esta cuenta tendrá acceso completo al panel de administración. Solo debería usarse una vez, para arrancar la plataforma.</p>
+    <div class="form-error" id="formErrorCrearAdmin"></div>
+    <form id="formCrearAdmin">
+      <div class="form-row">
+        <div class="form-group"><label>Nombres</label><input type="text" id="caNombres" required></div>
+        <div class="form-group"><label>Apellidos</label><input type="text" id="caApellidos" required></div>
+      </div>
+      <div class="form-row">
+        <div class="form-group"><label>DNI</label><input type="text" id="caDni" required maxlength="8"></div>
+        <div class="form-group"><label>Contraseña</label><input type="password" id="caPassword" required></div>
+      </div>
+      <div class="form-group"><label>Correo real</label><input type="text" id="caCorreo" required placeholder="admin@tramarsa.com.pe"></div>
+      <div class="modal-actions">
+        <button type="button" class="btn-cancel" id="btnCancelarCrearAdmin">Cancelar</button>
+        <button type="submit" class="btn-save">Crear administrador</button>
+      </div>
+    </form>
+  </div>
 </div>
 
 <!-- Modal: recuperar contraseña -->
 <div class="modal-overlay" id="modalRecuperarOverlay">
   <div class="modal">
     <h2>Recuperar contraseña</h2>
-    <p style="font-size:.82rem;color:var(--gray-500);margin-bottom:14px;">Ingresa tu DNI. Te enviaremos tu contraseña actual al correo registrado.</p>
+    <p style="font-size:.82rem;color:var(--gray-500);margin-bottom:14px;">Ingresa tu DNI. Te enviaremos un enlace para restablecer tu contraseña al correo registrado.</p>
     <div class="form-group"><label>DNI</label><input type="text" id="rDni" maxlength="8" inputmode="numeric"></div>
     <div class="form-error" id="formErrorRecuperar"></div>
     <div class="form-success" id="formSuccessRecuperar"></div>
@@ -383,14 +410,49 @@ tr:last-child td { border-bottom:none; }
       <div class="form-group"><label>Nombre del módulo</label><input type="text" id="fNombre" required placeholder="Ej. Inducción de Seguridad y Salud en el Trabajo"></div>
       <div class="form-group"><label>Descripción</label><textarea id="fDescripcion" placeholder="Breve descripción del contenido"></textarea></div>
       <div class="form-group"><label>Categoría</label><input type="text" id="fCategoria" placeholder="Ej. Seguridad, Ética, Operaciones"></div>
+      <div class="form-row">
+        <div class="form-group">
+          <label>Ícono (cuando no hay miniatura)</label>
+          <select id="fIcono">
+            <option value="book-open">Libro</option>
+            <option value="shield-check">Escudo</option>
+            <option value="hard-hat">Casco de seguridad</option>
+            <option value="users">Personas</option>
+            <option value="heart-handshake">Convivencia</option>
+            <option value="graduation-cap">Graduación</option>
+            <option value="scale">Ética / normativa</option>
+            <option value="flame">Riesgo / incendio</option>
+            <option value="megaphone">Comunicación</option>
+            <option value="file-text">Documento</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label>Color de portada</label>
+          <input type="color" id="fColor" value="#2563eb" style="height:42px;padding:4px;">
+        </div>
+      </div>
       <div class="form-group">
-        <label>Archivo del módulo (.zip o .rar)</label>
+        <label>Miniatura del módulo (imagen 16:9, opcional)</label>
+        <div class="file-drop" id="fileDropMiniatura">
+          <input type="file" id="fMiniatura" accept="image/*" style="display:none;">
+          <i data-lucide="image" size="22"></i>
+          <p>Haz clic o arrastra aquí la imagen de portada</p>
+          <div class="file-name" id="nombreMiniatura"></div>
+          <img id="previewMiniatura" style="display:none;max-width:100%;aspect-ratio:16/9;object-fit:cover;border-radius:8px;margin-top:8px;">
+        </div>
+      </div>
+      <div class="form-group">
+        <label>Archivo del módulo (.zip, .rar o una carpeta completa)</label>
         <div class="file-drop" id="fileDrop">
           <input type="file" id="fArchivo" accept=".zip,.rar" style="display:none;">
           <i data-lucide="upload-cloud" size="26"></i>
-          <p>Haz clic o arrastra aquí el archivo .zip / .rar</p>
+          <p>Haz clic o arrastra aquí el archivo .zip / .rar / carpeta</p>
           <div class="file-name" id="nombreArchivo"></div>
         </div>
+        <button type="button" class="btn-outline" id="btnElegirCarpetaModulo" style="margin-top:8px;">
+          <i data-lucide="folder-open" size="15"></i>&nbsp; O elegir una carpeta
+        </button>
+        <input type="file" id="fCarpeta" webkitdirectory directory multiple style="display:none;">
       </div>
       <div class="form-group">
         <label>Preguntas de la evaluación (.txt, .docx o .json)</label>
@@ -435,12 +497,16 @@ tr:last-child td { border-bottom:none; }
       </div>
       <div class="form-row">
         <div class="form-group"><label>DNI</label><input type="text" id="uDni" required maxlength="8"></div>
-        <div class="form-group"><label>Contraseña</label><input type="text" id="uPassword" placeholder="Por defecto: el DNI"></div>
+        <div class="form-group" id="grupoUPassword"><label>Contraseña inicial</label><input type="text" id="uPassword" placeholder="Por defecto: el DNI"></div>
       </div>
       <div class="form-group"><label>Correo corporativo</label><input type="text" id="uCorreo" required placeholder="usuario@tramarsa.com.pe"></div>
       <div class="form-row">
+        <div class="form-group"><label>Empresa</label><input type="text" id="uEmpresa" placeholder="Ej. Tramarsa"></div>
         <div class="form-group"><label>Sede</label><input type="text" id="uSede" placeholder="Ej. Lima"></div>
+      </div>
+      <div class="form-row">
         <div class="form-group"><label>Área</label><input type="text" id="uArea" placeholder="Ej. Operaciones"></div>
+        <div class="form-group"><label>Gerencia</label><input type="text" id="uGerencia" placeholder="Ej. Gerencia Comercial"></div>
       </div>
       <div class="modal-actions">
         <button type="button" class="btn-cancel" id="btnCancelarUsuario">Cancelar</button>
@@ -534,7 +600,7 @@ tr:last-child td { border-bottom:none; }
 </div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
-<script src="js/app.js"></script>
-<script src="js/reproductor.js"></script>
+<script type="module" src="js/app.js"></script>
+<script type="module" src="js/reproductor.js"></script>
 </body>
 </html>

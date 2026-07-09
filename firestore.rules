@@ -1,0 +1,41 @@
+// TRAMARSA LMS — Reglas de Firestore
+//
+// Sin Cloud Functions ni Custom Claims (decisión del proyecto: todo
+// corre client-side), no hay forma de que estas reglas verifiquen de
+// forma confiable si la cuenta autenticada es ADMIN — ese dato vive en
+// un documento que el propio cliente puede escribir. El baseline es
+// "cualquier cuenta autenticada puede leer/escribir": bloquea acceso
+// público/anónimo, pero NO impide que una cuenta TRABAJADOR autenticada
+// llame a la API de Firestore directamente (fuera de la UI) para leer o
+// modificar datos de otros. Reforzar esto requiere Custom Claims
+// asignados por un Cloud Function/Admin SDK — pendiente, fuera del
+// alcance actual del proyecto.
+//
+// `usuarios` es la única excepción con lectura pública (sin
+// autenticar): el login por DNI necesita mapear DNI → correo ANTES de
+// poder autenticar con Firebase Auth, y las reglas no pueden distinguir
+// "es un login legítimo" de otra cosa. Expone nombre/DNI/correo/área
+// (no contraseñas: esas viven solo en Firebase Auth) — equivalente a un
+// directorio interno de la empresa.
+
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /usuarios/{dni} {
+      allow read: if true;
+      allow write: if request.auth != null;
+    }
+    match /modulos/{moduloId} {
+      allow read, write: if request.auth != null;
+    }
+    match /asignaciones/{asignacionId} {
+      allow read, write: if request.auth != null;
+    }
+    match /historial/{historialId} {
+      allow read, write: if request.auth != null;
+    }
+    match /configuracion/{docId} {
+      allow read, write: if request.auth != null;
+    }
+  }
+}
