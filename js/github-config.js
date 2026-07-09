@@ -20,7 +20,7 @@
 export const GITHUB_OWNER = 'Diego906p';
 export const GITHUB_REPO = 'tramarsa-lms';
 export const GITHUB_BRANCH = 'main';
-export const GITHUB_TOKEN = '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';
+export const GITHUB_TOKEN = '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';
 
 export function githubEstaConfigurado() {
   return ![GITHUB_OWNER, GITHUB_REPO, GITHUB_TOKEN].some(v => v.startsWith('TU_'));
