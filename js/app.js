@@ -17,10 +17,58 @@ import {
 import * as DB from './db-firestore.js';
 import { crearCuentaAuthParaUsuario } from './firebase-secondary.js';
 import { subirArchivosAGithub } from './github-storage.js';
-import { archivoAJSZip, carpetaSeleccionadaAJSZip, carpetaArrastradaAJSZip, jszipAArchivoZip } from './modulo-loader/package-adapters.js';
+import { archivoAJSZip, carpetaArrastradaAJSZip, jszipAArchivoZip } from './modulo-loader/package-adapters.js';
+import { descargarCertificadoAdmin } from './reproductor.js';
 
 export function nombreCompleto(u) {
   return [u.primerNombre, u.segundoNombre, u.apellidoPaterno, u.apellidoMaterno].filter(Boolean).join(' ');
+}
+
+// ---------------------------------------------------------------
+// Feedback global de operaciones lentas: loader con mensaje de la
+// acción en curso + toasts de éxito/error. Usado por toda operación
+// perceptible (guardar módulo, crear/editar usuario, asignar, importar
+// Excel, generar certificado...) para que nunca parezca que la app se
+// quedó bloqueada.
+// ---------------------------------------------------------------
+export function mostrarCargando(mensaje) {
+  document.getElementById('loaderGlobalMensaje').textContent = mensaje || 'Procesando...';
+  document.getElementById('loaderGlobal').classList.remove('hidden');
+  lucide.createIcons();
+}
+function actualizarCargando(mensaje) {
+  const el = document.getElementById('loaderGlobalMensaje');
+  if (el) el.textContent = mensaje;
+}
+export function ocultarCargando() {
+  document.getElementById('loaderGlobal').classList.add('hidden');
+}
+export function toast(tipo, mensaje, duracionMs = 4000) {
+  const cont = document.getElementById('toastContainer');
+  const icono = tipo === 'exito' ? 'check-circle-2' : tipo === 'error' ? 'alert-triangle' : 'info';
+  const el = document.createElement('div');
+  el.className = `toast ${tipo}`;
+  el.innerHTML = `<i data-lucide="${icono}" size="18"></i><span>${mensaje}</span>`;
+  cont.appendChild(el);
+  lucide.createIcons();
+  setTimeout(() => el.remove(), duracionMs);
+}
+// Envuelve una operación async: muestra el loader con `mensaje`, la
+// ejecuta, y al terminar muestra un toast de éxito o error. Devuelve lo
+// que devuelva `fn`, o relanza el error tras avisar (para que el
+// llamador siga manejando su propio catch si lo necesita).
+async function conFeedback(mensaje, fn, { exito, error } = {}) {
+  mostrarCargando(mensaje);
+  try {
+    const resultado = await fn();
+    ocultarCargando();
+    if (exito) toast('exito', exito);
+    return resultado;
+  } catch (e) {
+    ocultarCargando();
+    toast('error', error || e.message || 'Ocurrió un error inesperado.');
+    throw e;
+  }
 }
 
 function mostrarErrorFirebaseNoConfigurado() {
@@ -114,8 +162,39 @@ export function getSesion() {
 export function setSesion(usuario) { sessionStorage.setItem('tramarsa_sesion', JSON.stringify(usuario)); }
 async function cerrarSesion() {
   sessionStorage.removeItem('tramarsa_sesion');
+  sessionStorage.removeItem('tramarsa_ruta');
+  sessionStorage.removeItem('tramarsa_scroll');
   await signOut(auth).catch(() => {});
   location.reload();
+}
+
+// ---------------------------------------------------------------
+// Restauración de estado tras refrescar (cualquier método: F5, Ctrl+F5,
+// botón recargar, Enter en la barra...). Cada render de sección guarda
+// su nombre; al arrancar con sesión válida se vuelve a esa misma sección
+// y a la misma posición de scroll, sin pasar por el login.
+// ---------------------------------------------------------------
+function marcarRuta(nombre) {
+  try { sessionStorage.setItem('tramarsa_ruta', nombre); } catch (e) {}
+}
+function elementoScroll() {
+  // el contenedor que realmente scrollea: .main si existe, si no la ventana
+  return document.querySelector('.main') || document.scrollingElement;
+}
+window.addEventListener('beforeunload', () => {
+  try {
+    const el = elementoScroll();
+    sessionStorage.setItem('tramarsa_scroll', String(el ? el.scrollTop : 0));
+  } catch (e) {}
+});
+function restaurarScroll() {
+  const guardado = parseInt(sessionStorage.getItem('tramarsa_scroll') || '0', 10);
+  if (!guardado) return;
+  sessionStorage.removeItem('tramarsa_scroll');
+  requestAnimationFrame(() => {
+    const el = elementoScroll();
+    if (el) el.scrollTop = guardado;
+  });
 }
 
 // ---------------------------------------------------------------
@@ -180,11 +259,21 @@ async function iniciarApp() {
     avatar.style.backgroundImage = '';
   }
 
-  if (usuario.rol === 'ADMIN') {
-    await renderCapacitaciones();
-  } else {
-    await renderDashboardTrabajador();
-  }
+  // Restaura la sección exacta donde estaba el usuario antes de refrescar
+  // (guardada por marcarRuta en cada render de sidebar).
+  const ruta = sessionStorage.getItem('tramarsa_ruta');
+  const rutasAdmin = {
+    capacitaciones: renderCapacitaciones, usuarios: renderUsuarios,
+    configuracion: renderConfiguracion
+  };
+  const rutasTrabajador = {
+    inicio: renderDashboardTrabajador, modulos: renderMisModulosTrabajador,
+    certificados: renderCertificadosTrabajador, perfil: renderPerfilTrabajador
+  };
+  const mapa = usuario.rol === 'ADMIN' ? rutasAdmin : rutasTrabajador;
+  const renderRuta = mapa[ruta] || (usuario.rol === 'ADMIN' ? renderCapacitaciones : renderDashboardTrabajador);
+  await renderRuta();
+  restaurarScroll();
   lucide.createIcons();
   verificarCambioPasswordObligatorio();
 }
@@ -273,11 +362,11 @@ function logoDeSidebar() {
 // TRABAJADOR
 // ---------------------------------------------------------------
 function renderSidebarTrabajador(activo) {
+  marcarRuta(activo);
   const items = [
     { key:'inicio', label:'Inicio', icon:'home', fn:'renderDashboardTrabajador' },
     { key:'modulos', label:'Mis módulos', icon:'book-open', fn:'renderMisModulosTrabajador' },
     { key:'certificados', label:'Certificados', icon:'award', fn:'renderCertificadosTrabajador' },
-    { key:'progreso', label:'Mi progreso', icon:'trending-up', fn:'renderProgresoTrabajador' },
     { key:'perfil', label:'Perfil', icon:'user', fn:'renderPerfilTrabajador' }
   ];
   document.getElementById('sidebar').innerHTML = `
@@ -327,6 +416,19 @@ const COLOR_POR_ESTADO = {
   PENDIENTE: { bg: 'var(--orange-100)', fg: 'var(--orange-500)' }
 };
 
+// ---------------------------------------------------------------
+// Identidad visual del módulo (ícono + color + miniatura elegidos al
+// crearlo): se reutiliza igual en TODAS las vistas donde aparezca un
+// módulo — admin y trabajador, actuales y futuras.
+// ---------------------------------------------------------------
+export function chipModulo(m, size = 36, iconSize = 17) {
+  return `<div class="mod-chip" style="width:${size}px;height:${size}px;background:${m.color || 'var(--blue-600)'};"><i data-lucide="${m.icono || 'book-open'}" size="${iconSize}"></i></div>`;
+}
+export function coverModulo(m, iconSize = 26) {
+  if (m.miniaturaUrl) return `<div class="modulo-cover" style="background-image:url('${m.miniaturaUrl}');"></div>`;
+  return `<div class="modulo-cover" style="background:${m.color || 'var(--blue-100)'};color:#fff;"><i data-lucide="${m.icono || 'book-open'}" size="${iconSize}"></i></div>`;
+}
+
 function filaModuloTrabajador(item, conCertificado) {
   const m = item.modulo;
   const color = COLOR_POR_ESTADO[item.estado] || COLOR_POR_ESTADO.PENDIENTE;
@@ -347,7 +449,7 @@ function filaModuloTrabajador(item, conCertificado) {
 
   return `
     <div class="modulo-asignado-item">
-      <div class="icn" style="background:${color.bg};color:${color.fg};"><i data-lucide="${item.estado === 'COMPLETADO' ? 'check-circle-2' : item.estado === 'EN_PROGRESO' ? 'clock' : 'book-open'}" size="18"></i></div>
+      ${chipModulo(m, 40, 18)}
       <div style="flex:1;">
         <h4>${m.nombre}</h4>
         <p>${m.categoria ? m.categoria + ' · ' : ''}${estadoTexto}</p>
@@ -357,6 +459,63 @@ function filaModuloTrabajador(item, conCertificado) {
     </div>`;
 }
 
+// Tarjeta moderna de módulo para el trabajador: miniatura (o cover con el
+// color+ícono del módulo), chip de identidad, estado, avance y acciones
+// según el estado. La usan Mis módulos, Certificados y Mi progreso.
+function tarjetaModuloTrabajador(item, vista) {
+  const m = item.modulo;
+  const color = COLOR_POR_ESTADO[item.estado] || COLOR_POR_ESTADO.PENDIENTE;
+  const estadoLabel = item.estado === 'COMPLETADO' ? 'Completado' : item.estado === 'EN_PROGRESO' ? 'En progreso' : 'No iniciado';
+  const badge = `<span class="badge-mini" style="background:${color.bg};color:${color.fg};">${estadoLabel}</span>`;
+
+  let cuerpoExtra = '';
+  let acciones = '';
+
+  if (vista === 'certificados') {
+    cuerpoExtra = `
+      <div class="modulo-meta"><i data-lucide="target" size="13"></i> Puntaje: ${item.hist && item.hist.puntaje != null ? item.hist.puntaje + '%' : 'Sin evaluación'}</div>
+      <div class="modulo-meta"><i data-lucide="calendar" size="13"></i> Emitido: ${item.hist && item.hist.fechaFin ? new Date(item.hist.fechaFin).toLocaleDateString('es-PE') : '-'}</div>`;
+    acciones = `<button class="btn-save" style="width:100%;justify-content:center;display:flex;align-items:center;gap:7px;" onclick="verCertificadoStandalone('${m.id}', renderCertificadosTrabajador)"><i data-lucide="download" size="14"></i> Descargar certificado</button>`;
+  } else {
+    cuerpoExtra = `
+      <div style="display:flex;align-items:center;gap:10px;margin-top:4px;">
+        <div class="barra-progreso-mini" style="flex:1;"><div class="barra-progreso-mini-fill" style="width:${item.avance}%;background:${color.fg};"></div></div>
+        <span style="font-size:.78rem;font-weight:800;color:var(--gray-700);min-width:38px;text-align:right;">${item.avance}%</span>
+      </div>`;
+    if (vista === 'modulos') {
+      if (item.estado === 'COMPLETADO') {
+        acciones = `
+          <button class="icon-btn" onclick="abrirReproductor('${m.id}')"><i data-lucide="rotate-ccw" size="13"></i> Volver a ver</button>
+          <button class="icon-btn primary-outline" onclick="verCertificadoStandalone('${m.id}', renderMisModulosTrabajador)"><i data-lucide="award" size="13"></i> Certificado</button>`;
+      } else if (m.archivoUrl) {
+        acciones = `<button class="btn-save" style="width:100%;justify-content:center;" onclick="abrirReproductor('${m.id}')">${item.estado === 'EN_PROGRESO' ? 'Continuar' : 'Iniciar'}</button>`;
+      } else {
+        acciones = `<span style="font-size:.76rem;color:var(--gray-400);">El administrador aún no subió el contenido</span>`;
+      }
+    }
+  }
+
+  return `
+    <div class="modulo-card">
+      ${coverModulo(m)}
+      <div class="modulo-body">
+        <div style="display:flex;align-items:center;gap:10px;">
+          ${chipModulo(m)}
+          <div style="flex:1;min-width:0;">
+            <h3 style="margin:0;">${m.nombre}</h3>
+            <p style="margin:0;font-size:.76rem;">${m.categoria || 'Sin categoría'}</p>
+          </div>
+          ${badge}
+        </div>
+        ${cuerpoExtra}
+      </div>
+      ${acciones ? `<div class="modulo-actions">${acciones}</div>` : ''}
+    </div>`;
+}
+
+// Inicio: dashboard de novedades (no repite Mis módulos) — avisos de
+// módulos recién asignados, el módulo en curso más avanzado para
+// retomarlo directo, y los últimos certificados obtenidos.
 export async function renderDashboardTrabajador() {
   renderSidebarTrabajador('inicio');
   document.getElementById('pageTitle').textContent = 'Inicio';
@@ -364,54 +523,72 @@ export async function renderDashboardTrabajador() {
   const { usuario, items, completados, enProgreso, pendientes } = await datosCapacitacionesTrabajador();
   const total = items.length;
   const pctGeneral = total ? Math.round((completados.length / total) * 100) : 0;
-  const pendientesOEnProgreso = items.filter(i => i.estado !== 'COMPLETADO');
+  const continuarItem = enProgreso.slice().sort((a, b) => b.avance - a.avance)[0] || null;
+  const logros = completados.slice()
+    .sort((a, b) => new Date(b.hist.fechaFin) - new Date(a.hist.fechaFin))
+    .slice(0, 3);
 
   document.getElementById('content').innerHTML = `
-    <div class="welcome-row">
-      <h1>¡Bienvenido, ${usuario.primerNombre}!</h1>
-      <p>Continúa con tu desarrollo profesional. Tu progreso nos impulsa a seguir creciendo.</p>
-    </div>
-    ${total ? `
-    <div class="panel" style="display:flex;align-items:center;gap:24px;margin-bottom:20px;flex-wrap:wrap;">
-      <div class="progreso-ring" style="--pct:${pctGeneral};"><span>${pctGeneral}%</span></div>
+    <div class="welcome-row" style="display:flex;align-items:center;justify-content:space-between;gap:20px;flex-wrap:wrap;">
       <div>
-        <h2 style="font-size:1rem;font-weight:800;color:var(--navy-900);">Progreso general</h2>
-        <p style="font-size:.85rem;color:var(--gray-500);">${completados.length} de ${total} módulo(s) completado(s)</p>
+        <h1>¡Bienvenido, ${usuario.primerNombre}!</h1>
+        <p>Continúa con tu desarrollo profesional. Tu progreso nos impulsa a seguir creciendo.</p>
       </div>
-    </div>` : ''}
-    <div class="stat-grid">
-      <div class="stat-card"><div class="stat-icon" style="background:var(--blue-100);color:var(--blue-600);"><i data-lucide="graduation-cap" size="18"></i></div><div><div class="num">${enProgreso.length}</div><div class="label">En progreso</div></div></div>
-      <div class="stat-card"><div class="stat-icon" style="background:var(--green-100);color:var(--green-500);"><i data-lucide="check-circle-2" size="18"></i></div><div><div class="num">${completados.length}</div><div class="label">Completadas</div></div></div>
-      <div class="stat-card"><div class="stat-icon" style="background:var(--orange-100);color:var(--orange-500);"><i data-lucide="clock" size="18"></i></div><div><div class="num">${pendientes.length}</div><div class="label">Pendientes</div></div></div>
-      <div class="stat-card"><div class="stat-icon" style="background:var(--purple-100);color:var(--purple-500);"><i data-lucide="award" size="18"></i></div><div><div class="num">${completados.length}</div><div class="label">Certificados</div></div></div>
+      ${total ? `<div class="progreso-ring" style="--pct:${pctGeneral};width:74px;height:74px;font-size:.9rem;"><span>${pctGeneral}%</span></div>` : ''}
     </div>
-    ${pendientesOEnProgreso.length ? `
-    <div class="panel">
-      <div class="panel-head"><h2>Mis capacitaciones</h2></div>
-      <div id="listaModulosTrabajador"></div>
+
+    ${continuarItem ? `
+    <div class="panel" style="margin-top:16px;">
+      <div class="panel-head"><h2>Continúa donde quedaste</h2></div>
+      ${filaModuloTrabajador(continuarItem, false)}
     </div>` : ''}
+
+    ${pendientes.length ? `
+    <div class="panel" style="margin-top:16px;">
+      <div class="panel-head"><h2>Nuevos módulos asignados</h2></div>
+      <div id="listaAvisosPendientes"></div>
+    </div>` : ''}
+
+    ${logros.length ? `
+    <div class="panel" style="margin-top:16px;">
+      <div class="panel-head"><h2>Logros recientes</h2></div>
+      <div id="listaLogros"></div>
+    </div>` : ''}
+
+    ${total === 0 ? `
+    <div class="panel" style="margin-top:16px;"><div class="empty-state">
+      <i data-lucide="inbox" size="30"></i>
+      <p>No existen módulos asignados.<br>Cuando el administrador te habilite una capacitación, aparecerá aquí.</p>
+    </div></div>` : ''}
   `;
 
-  if (pendientesOEnProgreso.length) {
-    document.getElementById('listaModulosTrabajador').innerHTML = pendientesOEnProgreso.map(i => filaModuloTrabajador(i, false)).join('');
-  } else if (total === 0) {
-    document.getElementById('content').insertAdjacentHTML('beforeend', `
-      <div class="panel"><div class="empty-state">
-        <i data-lucide="inbox" size="30"></i>
-        <p>No existen módulos asignados.<br>Cuando el administrador te habilite una capacitación, aparecerá aquí.</p>
-      </div></div>`);
+  if (pendientes.length) {
+    document.getElementById('listaAvisosPendientes').innerHTML = pendientes.map(i => filaModuloTrabajador(i, false)).join('');
+  }
+  if (logros.length) {
+    document.getElementById('listaLogros').innerHTML = logros.map(i => `
+      <div class="modulo-asignado-item">
+        ${chipModulo(i.modulo, 40, 18)}
+        <div style="flex:1;">
+          <h4>${i.modulo.nombre}</h4>
+          <p>Completado el ${new Date(i.hist.fechaFin).toLocaleDateString('es-PE')} — puntaje ${i.hist.puntaje ?? '-'}%</p>
+        </div>
+        <button class="icon-btn primary-outline" onclick="verCertificadoStandalone('${i.modulo.id}', renderDashboardTrabajador)"><i data-lucide="award" size="13"></i> Certificado</button>
+      </div>`).join('');
   }
   lucide.createIcons();
 }
 
 let filtroMisModulos = 'todos';
 async function renderMisModulosTrabajador(filtro) {
-  if (filtro) filtroMisModulos = filtro;
+  if (filtro) { filtroMisModulos = filtro; paginaMisModulos = 1; }
   renderSidebarTrabajador('modulos');
   document.getElementById('pageTitle').textContent = 'Mis módulos';
-  document.getElementById('pageSubtitle').textContent = 'Todas tus capacitaciones asignadas';
+  document.getElementById('pageSubtitle').textContent = 'Todos tus módulos asignados';
 
   const { items, completados, enProgreso, pendientes } = await datosCapacitacionesTrabajador();
+  const total = items.length;
+  const pctGeneral = total ? Math.round((completados.length / total) * 100) : 0;
   const tarjetas = [
     { key:'todos', label:'Todos', num: items.length, bg: 'var(--gray-100)', fg: 'var(--gray-500)', icon: 'layout-grid' },
     { key:'progreso', label:'En progreso', num: enProgreso.length, bg: 'var(--blue-100)', fg: 'var(--blue-600)', icon: 'graduation-cap' },
@@ -424,6 +601,14 @@ async function renderMisModulosTrabajador(filtro) {
     : items;
 
   document.getElementById('content').innerHTML = `
+    ${total ? `
+    <div class="panel" style="display:flex;align-items:center;gap:24px;margin-bottom:20px;flex-wrap:wrap;">
+      <div class="progreso-ring" style="--pct:${pctGeneral};"><span>${pctGeneral}%</span></div>
+      <div>
+        <h2 style="font-size:1rem;font-weight:800;color:var(--navy-900);">Progreso general</h2>
+        <p style="font-size:.85rem;color:var(--gray-500);">${completados.length} de ${total} módulo(s) completado(s)</p>
+      </div>
+    </div>` : ''}
     <div class="stat-grid">
       ${tarjetas.map(t => `
         <div class="stat-card stat-filtro ${filtroMisModulos===t.key?'active':''}" style="--activo-color:${t.fg};" onclick="renderMisModulosTrabajador('${t.key}')">
@@ -431,69 +616,45 @@ async function renderMisModulosTrabajador(filtro) {
           <div><div class="num">${t.num}</div><div class="label">${t.label}</div></div>
         </div>`).join('')}
     </div>
-    <div class="panel"><div id="listaMisModulos"></div></div>
+    <div class="grid-modulos" id="listaMisModulos"></div>
   `;
 
-  document.getElementById('listaMisModulos').innerHTML = filtrados.length
-    ? filtrados.map(i => filaModuloTrabajador(i, true)).join('')
-    : `<div class="empty-state"><i data-lucide="inbox" size="30"></i><p>No hay módulos en esta categoría.</p></div>`;
+  if (filtrados.length) {
+    const totalPaginas = Math.max(1, Math.ceil(filtrados.length / TARJETAS_POR_PAGINA));
+    paginaMisModulos = Math.min(paginaMisModulos, totalPaginas);
+    const inicio = (paginaMisModulos - 1) * TARJETAS_POR_PAGINA;
+    document.getElementById('listaMisModulos').innerHTML =
+      filtrados.slice(inicio, inicio + TARJETAS_POR_PAGINA).map(i => tarjetaModuloTrabajador(i, 'modulos')).join('')
+      + htmlPaginacionTarjetas(paginaMisModulos, totalPaginas, 'cambiarPaginaMisModulos');
+  } else {
+    document.getElementById('listaMisModulos').innerHTML = `<div class="empty-modulos"><i data-lucide="inbox" size="30"></i><p>No hay módulos en esta categoría.</p></div>`;
+  }
   lucide.createIcons();
 }
+let paginaMisModulos = 1;
+function cambiarPaginaMisModulos(n) { paginaMisModulos = n; renderMisModulosTrabajador(); }
 
+let paginaCertificados = 1;
 async function renderCertificadosTrabajador() {
   renderSidebarTrabajador('certificados');
   document.getElementById('pageTitle').textContent = 'Certificados';
-  document.getElementById('pageSubtitle').textContent = 'Certificados obtenidos por capacitaciones completadas';
+  document.getElementById('pageSubtitle').textContent = 'Certificados obtenidos por módulos completados';
   const { completados } = await datosCapacitacionesTrabajador();
 
-  document.getElementById('content').innerHTML = `<div class="panel"><div id="listaCertificados"></div></div>`;
-  document.getElementById('listaCertificados').innerHTML = completados.length
-    ? completados.map(i => `
-      <div class="modulo-asignado-item">
-        <div class="icn"><i data-lucide="award" size="18"></i></div>
-        <div style="flex:1;">
-          <h4>${i.modulo.nombre}</h4>
-          <p>Completado el ${new Date(i.hist.fechaFin).toLocaleDateString('es-PE')} — puntaje ${i.hist.puntaje ?? '-'}%</p>
-        </div>
-        <button class="icon-btn primary-outline" onclick="verCertificadoStandalone('${i.modulo.id}', renderCertificadosTrabajador)"><i data-lucide="download" size="13"></i> Ver / descargar</button>
-      </div>`).join('')
-    : `<div class="empty-state"><i data-lucide="award" size="30"></i><p>Todavía no tienes certificados. Completa una capacitación para obtener el primero.</p></div>`;
+  document.getElementById('content').innerHTML = `<div class="grid-modulos" id="listaCertificados"></div>`;
+  if (completados.length) {
+    const totalPaginas = Math.max(1, Math.ceil(completados.length / TARJETAS_POR_PAGINA));
+    paginaCertificados = Math.min(paginaCertificados, totalPaginas);
+    const inicio = (paginaCertificados - 1) * TARJETAS_POR_PAGINA;
+    document.getElementById('listaCertificados').innerHTML =
+      completados.slice(inicio, inicio + TARJETAS_POR_PAGINA).map(i => tarjetaModuloTrabajador(i, 'certificados')).join('')
+      + htmlPaginacionTarjetas(paginaCertificados, totalPaginas, 'cambiarPaginaCertificados');
+  } else {
+    document.getElementById('listaCertificados').innerHTML = `<div class="empty-modulos"><i data-lucide="award" size="30"></i><p>Todavía no tienes certificados. Completa una capacitación para obtener el primero.</p></div>`;
+  }
   lucide.createIcons();
 }
-
-async function renderProgresoTrabajador() {
-  renderSidebarTrabajador('progreso');
-  document.getElementById('pageTitle').textContent = 'Mi progreso';
-  document.getElementById('pageSubtitle').textContent = '';
-  const { items, completados } = await datosCapacitacionesTrabajador();
-  const total = items.length;
-  const pctGeneral = total ? Math.round((completados.length / total) * 100) : 0;
-
-  document.getElementById('content').innerHTML = `
-    <div class="panel" style="display:flex;align-items:center;gap:24px;margin-bottom:20px;flex-wrap:wrap;">
-      <div class="progreso-ring" style="--pct:${pctGeneral};"><span>${pctGeneral}%</span></div>
-      <div>
-        <h2 style="font-size:1rem;font-weight:800;color:var(--navy-900);">Avance general</h2>
-        <p style="font-size:.85rem;color:var(--gray-500);">${completados.length} de ${total} módulo(s) completado(s)</p>
-      </div>
-    </div>
-    <div class="panel">
-      <div class="panel-head"><h2>Detalle por módulo</h2></div>
-      <div id="listaProgreso"></div>
-    </div>
-  `;
-  document.getElementById('listaProgreso').innerHTML = items.length
-    ? items.map(i => `
-      <div class="modulo-asignado-item">
-        <div style="flex:1;">
-          <h4>${i.modulo.nombre}</h4>
-          <div class="barra-progreso-mini"><div class="barra-progreso-mini-fill" style="width:${i.avance}%;"></div></div>
-        </div>
-        <span style="font-size:.8rem;font-weight:700;color:var(--gray-700);min-width:40px;text-align:right;">${i.avance}%</span>
-      </div>`).join('')
-    : `<div class="empty-state"><i data-lucide="inbox" size="30"></i><p>No tienes módulos asignados todavía.</p></div>`;
-  lucide.createIcons();
-}
+function cambiarPaginaCertificados(n) { paginaCertificados = n; renderCertificadosTrabajador(); }
 
 function renderPerfilTrabajador() {
   renderSidebarTrabajador('perfil');
@@ -510,6 +671,7 @@ function renderPerfilTrabajador() {
           <input type="file" id="fFotoPerfil" accept="image/*" style="display:none;">
           Cambiar foto
         </label>
+        ${usuario.fotoUrl ? `<button type="button" class="btn-cancel" id="btnEliminarFotoPerfil">Eliminar</button>` : ''}
       </div>
     </div>
     <div class="panel" style="max-width:480px;margin-top:20px;">
@@ -537,6 +699,16 @@ function renderPerfilTrabajador() {
       renderPerfilTrabajador();
     };
     reader.readAsDataURL(f);
+  });
+
+  const btnEliminarFoto = document.getElementById('btnEliminarFotoPerfil');
+  if (btnEliminarFoto) btnEliminarFoto.addEventListener('click', async () => {
+    await conFeedback('Eliminando foto...', async () => {
+      await DB.actualizarUsuario(usuario.dni, { fotoUrl: '' });
+      usuario.fotoUrl = '';
+      setSesion(usuario);
+      renderPerfilTrabajador();
+    }, { exito: 'Foto eliminada.', error: 'No se pudo eliminar la foto.' });
   });
 
   document.getElementById('formPerfilPassword').addEventListener('submit', async (e) => {
@@ -573,11 +745,10 @@ function renderPerfilTrabajador() {
 // Sidebar ADMIN
 // ---------------------------------------------------------------
 function renderSidebarAdmin(activo) {
+  marcarRuta(activo);
   const items = [
-    { key:'capacitaciones', label:'Capacitaciones', icon:'book-open', fn:'renderCapacitaciones' },
+    { key:'capacitaciones', label:'Módulos', icon:'book-open', fn:'renderCapacitaciones' },
     { key:'usuarios', label:'Usuarios', icon:'users', fn:'renderUsuarios' },
-    { key:'asignaciones', label:'Asignaciones', icon:'link-2', fn:'renderAsignaciones' },
-    { key:'reportes', label:'Reportes', icon:'bar-chart-3', fn:'renderReportes' },
     { key:'configuracion', label:'Configuración', icon:'settings', fn:'renderConfiguracion' }
   ];
   document.getElementById('sidebar').innerHTML = `
@@ -595,111 +766,7 @@ function renderSidebarAdmin(activo) {
 // ADMIN: Asignaciones — vista consolidada de qué módulo tiene
 // habilitado cada trabajador.
 // ---------------------------------------------------------------
-async function renderAsignaciones() {
-  renderSidebarAdmin('asignaciones');
-  document.getElementById('pageTitle').textContent = 'Asignaciones';
-  document.getElementById('pageSubtitle').textContent = 'Qué módulo tiene habilitado cada trabajador';
-  const [modulos, usuarios, asignaciones] = await Promise.all([DB.obtenerModulos(), DB.obtenerUsuarios(), DB.obtenerAsignaciones()]);
-  const trabajadores = usuarios.filter(u => u.rol === 'TRABAJADOR');
 
-  document.getElementById('content').innerHTML = `<div class="grid-modulos" id="gridAsignaciones"></div>`;
-  const grid = document.getElementById('gridAsignaciones');
-
-  if (modulos.length === 0) {
-    grid.innerHTML = `<div class="empty-modulos"><i data-lucide="link-2" size="36"></i><p>Todavía no hay módulos creados.</p></div>`;
-  } else {
-    grid.innerHTML = modulos.map(m => {
-      const asignados = asignaciones.filter(a => a.moduloId === m.id && a.habilitado)
-        .map(a => trabajadores.find(u => u.id === a.usuarioId)).filter(Boolean);
-      return `
-      <div class="modulo-card">
-        <div class="modulo-cover"><i data-lucide="link-2" size="26"></i></div>
-        <div class="modulo-body">
-          <h3>${m.nombre}</h3>
-          <p>${asignados.length} trabajador(es) habilitado(s)</p>
-          <div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:2px;">
-            ${asignados.length
-              ? asignados.slice(0, 6).map(u => `<span class="badge-mini activo">${u.primerNombre}</span>`).join('') + (asignados.length > 6 ? `<span class="badge-mini inactivo">+${asignados.length - 6}</span>` : '')
-              : '<span style="font-size:.76rem;color:var(--gray-400);">Sin asignaciones todavía</span>'}
-          </div>
-        </div>
-        <div class="modulo-actions">
-          <button class="icon-btn primary-outline" onclick="abrirModalGrupo('${m.id}','${m.nombre.replace(/'/g,"\\'")}')"><i data-lucide="users-round" size="13"></i> Asignar por área/sede</button>
-        </div>
-      </div>`;
-    }).join('');
-  }
-  lucide.createIcons();
-}
-
-// ---------------------------------------------------------------
-// ADMIN: Reportes
-// ---------------------------------------------------------------
-let filtroReporteEstado = '';
-let cacheReportes = null;
-async function renderReportes(filtro) {
-  if (filtro !== undefined) filtroReporteEstado = filtro;
-  renderSidebarAdmin('reportes');
-  document.getElementById('pageTitle').textContent = 'Reportes';
-  document.getElementById('pageSubtitle').textContent = 'Historial de capacitaciones de todos los trabajadores';
-
-  if (!cacheReportes) {
-    const [historial, usuarios, modulos] = await Promise.all([DB.obtenerHistorial(), DB.obtenerUsuarios(), DB.obtenerModulos()]);
-    cacheReportes = historial.map(h => ({
-      ...h,
-      usuario: usuarios.find(u => u.id === h.usuarioId),
-      modulo: modulos.find(m => m.id === h.moduloId)
-    })).filter(f => f.usuario && f.modulo);
-  }
-  const filas = cacheReportes;
-  const filtradas = filtroReporteEstado ? filas.filter(f => f.estado === filtroReporteEstado) : filas;
-
-  document.getElementById('content').innerHTML = `
-    <div class="toolbar">
-      <div class="filters-bar" style="margin-bottom:0;">
-        <select id="filtroReporte">
-          <option value="">Todos los estados</option>
-          <option value="COMPLETADO">Completados</option>
-          <option value="EN_PROGRESO">En progreso</option>
-        </select>
-      </div>
-      <div class="toolbar-right">
-        <button class="btn-outline" onclick="exportarReporteExcel()"><i data-lucide="download" size="15"></i> Exportar reporte</button>
-      </div>
-    </div>
-    <div class="table-wrap">
-      <table>
-        <thead><tr><th>Trabajador</th><th>Módulo</th><th>Estado</th><th>Puntaje</th><th>Inicio</th><th>Fin</th></tr></thead>
-        <tbody id="tablaReporte"></tbody>
-      </table>
-    </div>
-  `;
-  const filtroSelect = document.getElementById('filtroReporte');
-  filtroSelect.value = filtroReporteEstado;
-  filtroSelect.addEventListener('change', (e) => renderReportes(e.target.value));
-
-  document.getElementById('tablaReporte').innerHTML = filtradas.length ? filtradas.map(f => `
-    <tr>
-      <td>${nombreCompleto(f.usuario)}</td>
-      <td>${f.modulo.nombre}</td>
-      <td><span class="badge ${f.estado==='COMPLETADO'?'badge-activo':'badge-inactivo'}">${f.estado==='COMPLETADO'?'Completado':'En progreso'}</span></td>
-      <td>${f.puntaje ?? '-'}</td>
-      <td>${new Date(f.fechaInicio).toLocaleDateString('es-PE')}</td>
-      <td>${f.fechaFin ? new Date(f.fechaFin).toLocaleDateString('es-PE') : '-'}</td>
-    </tr>`).join('') : `<tr><td colspan="6" style="text-align:center;color:var(--gray-500);padding:30px;">No hay registros.</td></tr>`;
-  lucide.createIcons();
-}
-
-function exportarReporteExcel() {
-  const filas = (cacheReportes || []).map(f => ({
-    'Trabajador': nombreCompleto(f.usuario), 'DNI': f.usuario.dni, 'Módulo': f.modulo.nombre,
-    'Estado': f.estado, 'Puntaje': f.puntaje ?? '', 'Fecha inicio': f.fechaInicio, 'Fecha fin': f.fechaFin || ''
-  }));
-  const ws = XLSX.utils.json_to_sheet(filas);
-  const wb = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb, ws, 'Reporte');
-  XLSX.writeFile(wb, `reporte_capacitaciones_${new Date().toISOString().slice(0,10)}.xlsx`);
-}
 
 // ---------------------------------------------------------------
 // ADMIN: Configuración
@@ -715,70 +782,88 @@ async function renderConfiguracion() {
       <div class="panel-head"><h2>Resumen de la plataforma</h2></div>
       <p style="font-size:.84rem;color:var(--gray-700);">Módulos: <strong>${modulos.length}</strong></p>
       <p style="font-size:.84rem;color:var(--gray-700);">Trabajadores: <strong>${usuarios.filter(u=>u.rol==='TRABAJADOR').length}</strong></p>
-      <p style="font-size:.84rem;color:var(--gray-700);">Capacitaciones completadas: <strong>${historial.filter(h=>h.estado==='COMPLETADO').length}</strong></p>
-    </div>
-    <div class="panel" style="max-width:520px;margin-top:20px;">
-      <div class="panel-head"><h2>Migración desde la versión local</h2></div>
-      <p style="font-size:.84rem;color:var(--gray-500);margin-bottom:12px;">Si este navegador tiene datos de la versión anterior (localStorage), puedes subirlos a Firebase una sola vez. Los archivos .zip/.rar/certificados no se migran: vuelve a subirlos editando cada módulo.</p>
-      <div class="form-error" id="errorMigracion"></div>
-      <div class="form-success" id="successMigracion"></div>
-      <button class="btn-outline" id="btnImportarLocal"><i data-lucide="upload-cloud" size="15"></i> Importar datos locales a Firebase</button>
+      <p style="font-size:.84rem;color:var(--gray-700);">Módulos completados: <strong>${historial.filter(h=>h.estado==='COMPLETADO').length}</strong></p>
     </div>
   `;
-  document.getElementById('btnImportarLocal').addEventListener('click', async () => {
-    const errorBox = document.getElementById('errorMigracion');
-    const successBox = document.getElementById('successMigracion');
-    errorBox.classList.remove('show'); successBox.classList.remove('show');
-    try {
-      const resultado = await DB.importarDatosLocalesAFirestore();
-      successBox.textContent = `Se importaron ${resultado.contador} registro(s). ${resultado.avisoArchivos}`;
-      successBox.classList.add('show');
-      cacheReportes = null;
-    } catch (err) {
-      errorBox.textContent = err.message || 'No se pudo importar.';
-      errorBox.classList.add('show');
-    }
-  });
   lucide.createIcons();
 }
 
 // ---------------------------------------------------------------
 // ADMIN: Capacitaciones (Módulos)
 // ---------------------------------------------------------------
-async function renderCapacitaciones() {
+// ---------------------------------------------------------------
+// Paginación genérica para grids de tarjetas (Módulos admin, Mis
+// módulos, Certificados) — misma pinta que la de Usuarios.
+// ---------------------------------------------------------------
+const TARJETAS_POR_PAGINA = 9;
+function htmlPaginacionTarjetas(pagina, totalPaginas, fnCambiar) {
+  if (totalPaginas <= 1) return '';
+  return `
+    <div style="display:flex;justify-content:center;gap:8px;margin-top:16px;grid-column:1/-1;">
+      <button class="icon-btn" ${pagina===1?'disabled':''} onclick="${fnCambiar}(${pagina-1})"><i data-lucide="chevron-left" size="15"></i></button>
+      <span style="font-size:.82rem;color:var(--gray-500);align-self:center;">Página ${pagina} de ${totalPaginas}</span>
+      <button class="icon-btn" ${pagina===totalPaginas?'disabled':''} onclick="${fnCambiar}(${pagina+1})"><i data-lucide="chevron-right" size="15"></i></button>
+    </div>`;
+}
+function mesDeCarga(iso) {
+  if (!iso) return null;
+  const d = new Date(iso);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+}
+function etiquetaMes(clave) {
+  const [aaaa, mm] = clave.split('-');
+  return new Date(Number(aaaa), Number(mm) - 1, 1).toLocaleDateString('es-PE', { month: 'long', year: 'numeric' });
+}
+
+let paginaModulos = 1;
+let filtroMesModulos = '';
+async function renderCapacitaciones(pagina) {
+  if (pagina) paginaModulos = pagina;
   renderSidebarAdmin('capacitaciones');
-  document.getElementById('pageTitle').textContent = 'Capacitaciones';
+  document.getElementById('pageTitle').textContent = 'Módulos';
   document.getElementById('pageSubtitle').textContent = 'Gestión de módulos';
 
   const [modulos, asignaciones] = await Promise.all([DB.obtenerModulos(), DB.obtenerAsignaciones()]);
+  const meses = [...new Set(modulos.map(m => mesDeCarga(m.fechaCreacion)).filter(Boolean))].sort().reverse();
+  const modulosFiltrados = filtroMesModulos ? modulos.filter(m => mesDeCarga(m.fechaCreacion) === filtroMesModulos) : modulos;
 
   document.getElementById('content').innerHTML = `
     <div class="toolbar">
-      <div></div>
+      <div class="filters-bar" style="margin-bottom:0;">
+        <select id="filtroMesModulos"><option value="">Todos los meses</option>${meses.map(m => `<option value="${m}" ${m===filtroMesModulos?'selected':''}>${etiquetaMes(m)}</option>`).join('')}</select>
+      </div>
       <button class="btn-save" style="display:flex;align-items:center;gap:7px;" onclick="abrirModalModulo()"><i data-lucide="plus" size="16"></i> Nuevo módulo</button>
     </div>
     <div class="grid-modulos" id="gridModulos"></div>
   `;
+  document.getElementById('filtroMesModulos').addEventListener('change', (e) => {
+    filtroMesModulos = e.target.value;
+    paginaModulos = 1;
+    renderCapacitaciones();
+  });
 
   const grid = document.getElementById('gridModulos');
-  if (modulos.length === 0) {
+  if (modulosFiltrados.length === 0) {
     grid.innerHTML = `
       <div class="empty-modulos">
         <i data-lucide="package-open" size="36"></i>
-        <p>Todavía no se ha subido ningún módulo.<br>Haz clic en "Nuevo módulo" para agregar el primero.</p>
+        <p>${modulos.length === 0 ? 'Todavía no se ha subido ningún módulo.<br>Haz clic en "Nuevo módulo" para agregar el primero.' : 'Ningún módulo coincide con el mes seleccionado.'}</p>
       </div>`;
   } else {
-    grid.innerHTML = modulos.map(m => {
+    const totalPaginas = Math.max(1, Math.ceil(modulosFiltrados.length / TARJETAS_POR_PAGINA));
+    paginaModulos = Math.min(paginaModulos, totalPaginas);
+    const inicio = (paginaModulos - 1) * TARJETAS_POR_PAGINA;
+    const pagina_ = modulosFiltrados.slice(inicio, inicio + TARJETAS_POR_PAGINA);
+
+    grid.innerHTML = pagina_.map(m => {
       const totalHabilitados = asignaciones.filter(a => a.moduloId === m.id && a.habilitado).length;
-      const coverEstilo = m.miniaturaUrl
-        ? `background-image:url('${m.miniaturaUrl}');`
-        : m.color ? `background:${m.color};color:white;` : `background:var(--blue-100);color:var(--blue-600);`;
       return `
       <div class="modulo-card">
-        <div class="modulo-cover" style="${coverEstilo}">${m.miniaturaUrl ? '' : `<i data-lucide="${m.icono || 'book-open'}" size="26"></i>`}</div>
+        ${coverModulo(m)}
         <div class="modulo-body">
-          <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;">
-            <h3>${m.numeroModulo ? `M${m.numeroModulo} · ` : ''}${m.nombre}</h3>
+          <div style="display:flex;align-items:center;gap:10px;">
+            ${chipModulo(m)}
+            <h3 style="margin:0;flex:1;">${m.numeroModulo ? `M${m.numeroModulo} · ` : ''}${m.nombre}</h3>
             <span class="badge-mini ${m.estado==='ACTIVO'?'activo':'inactivo'}">${m.estado==='ACTIVO'?'Activo':'Inactivo'}</span>
           </div>
           <p>${m.descripcion || 'Sin descripción'}</p>
@@ -789,13 +874,13 @@ async function renderCapacitaciones() {
         </div>
         <div class="modulo-actions">
           <button class="icon-btn" onclick="abrirModalModulo('${m.id}')"><i data-lucide="pencil" size="13"></i> Editar</button>
-          <button class="icon-btn primary-outline" onclick="abrirModalGrupo('${m.id}','${m.nombre.replace(/'/g,"\\'")}')"><i data-lucide="users-round" size="13"></i> Asignar por área/sede</button>
+          <button class="icon-btn primary-outline" onclick="abrirModalGrupo('${m.id}','${m.nombre.replace(/'/g,"\\'")}')"><i data-lucide="users-round" size="13"></i> Asignar</button>
           <button class="icon-btn" onclick="toggleEstadoModulo('${m.id}')"><i data-lucide="power" size="13"></i> ${m.estado==='ACTIVO'?'Inactivar':'Activar'}</button>
           <button class="icon-btn danger" onclick="eliminarModulo('${m.id}','${m.nombre.replace(/'/g,"\\'")}')"><i data-lucide="trash-2" size="13"></i> Eliminar</button>
         </div>
       </div>
     `;
-    }).join('');
+    }).join('') + htmlPaginacionTarjetas(paginaModulos, totalPaginas, 'renderCapacitaciones');
   }
   lucide.createIcons();
 }
@@ -816,8 +901,6 @@ const modalOverlay = document.getElementById('modalOverlay');
 const formModulo = document.getElementById('formModulo');
 const fileDrop = document.getElementById('fileDrop');
 const fArchivo = document.getElementById('fArchivo');
-const fCarpeta = document.getElementById('fCarpeta');
-const btnElegirCarpetaModulo = document.getElementById('btnElegirCarpetaModulo');
 const fileDropPreguntas = document.getElementById('fileDropPreguntas');
 const fPreguntas = document.getElementById('fPreguntas');
 const fileDropCertificado = document.getElementById('fileDropCertificado');
@@ -825,6 +908,32 @@ const fCertificado = document.getElementById('fCertificado');
 const fileDropMiniatura = document.getElementById('fileDropMiniatura');
 const fMiniatura = document.getElementById('fMiniatura');
 let miniaturaExistenteUrl = null; // se conserva si al editar no se elige una nueva
+
+// Galería visual de íconos del módulo: tarjetas clicables (sin dropdown
+// de texto), mismo estilo gráfico usado en el resto de la plataforma.
+const ICONOS_MODULO = [
+  'book-open', 'shield-check', 'hard-hat', 'users', 'heart-handshake', 'graduation-cap',
+  'scale', 'flame', 'megaphone', 'file-text', 'briefcase', 'life-buoy',
+  'alert-triangle', 'lock', 'leaf', 'truck', 'wrench', 'clipboard-check',
+  'heart-pulse', 'building-2', 'globe', 'shield-alert', 'gavel', 'award'
+];
+function renderGaleriaIconos(seleccionado) {
+  const cont = document.getElementById('galeriaIconos');
+  cont.innerHTML = ICONOS_MODULO.map(icono => `
+    <div class="icon-gallery-item ${icono === seleccionado ? 'active' : ''}" data-icono="${icono}" title="${icono}">
+      <i data-lucide="${icono}" size="20"></i>
+    </div>`).join('');
+  cont.querySelectorAll('.icon-gallery-item').forEach(el => {
+    el.addEventListener('click', () => seleccionarIconoModulo(el.dataset.icono));
+  });
+  lucide.createIcons();
+}
+function seleccionarIconoModulo(icono) {
+  document.getElementById('fIcono').value = icono;
+  document.querySelectorAll('#galeriaIconos .icon-gallery-item').forEach(el => {
+    el.classList.toggle('active', el.dataset.icono === icono);
+  });
+}
 
 async function abrirModalModulo(id) {
   formModulo.reset();
@@ -843,7 +952,7 @@ async function abrirModalModulo(id) {
     document.getElementById('fNombre').value = m.nombre;
     document.getElementById('fDescripcion').value = m.descripcion || '';
     document.getElementById('fCategoria').value = m.categoria || '';
-    document.getElementById('fIcono').value = m.icono || 'book-open';
+    renderGaleriaIconos(m.icono || 'book-open');
     document.getElementById('fColor').value = m.color || '#2563eb';
     document.getElementById('nombreArchivo').textContent = m.archivoNombre ? `Actual: ${m.archivoNombre} (elige otro archivo para reemplazarlo)` : '';
     document.getElementById('nombrePreguntas').textContent = m.preguntas && m.preguntas.length ? `Actual: ${m.preguntasNombre || 'preguntas cargadas'} (${m.preguntas.length} preguntas — elige otro archivo para reemplazarlas)` : '';
@@ -856,6 +965,7 @@ async function abrirModalModulo(id) {
     }
   } else {
     document.getElementById('modalModuloTitulo').textContent = 'Nuevo módulo';
+    renderGaleriaIconos('book-open');
   }
   modalOverlay.classList.add('show');
 }
@@ -871,10 +981,9 @@ function wireFileDrop(drop, input, onChange) {
   });
   input.addEventListener('change', onChange);
 }
-// Normaliza cualquier carpeta (seleccionada o arrastrada) a .zip en el
-// navegador: los 3 caminos de carga (.zip / .rar / carpeta) terminan
-// siempre en el mismo artefacto almacenado y comparten el mismo código
-// de subida más abajo.
+// Normaliza una carpeta arrastrada a .zip en el navegador: los 3 caminos
+// de carga (.zip / .rar / carpeta) terminan siempre en el mismo artefacto
+// almacenado y comparten el mismo código de subida más abajo.
 async function normalizarCarpetaModulo(zipPromise) {
   const nombreBase = (document.getElementById('fNombre').value.trim() || 'modulo').replace(/\s+/g, '_');
   document.getElementById('nombreArchivo').textContent = 'Comprimiendo carpeta...';
@@ -890,13 +999,6 @@ async function normalizarCarpetaModulo(zipPromise) {
     document.getElementById('nombreArchivo').textContent = 'No se pudo leer la carpeta seleccionada.';
   }
 }
-
-btnElegirCarpetaModulo.addEventListener('click', () => fCarpeta.click());
-fCarpeta.addEventListener('change', async () => {
-  if (!fCarpeta.files.length) return;
-  await normalizarCarpetaModulo(carpetaSeleccionadaAJSZip(fCarpeta.files));
-  fCarpeta.value = '';
-});
 
 // La zona de arrastre acepta .zip/.rar sueltos o una carpeta completa: los
 // FileSystemEntry hay que leerlos con webkitGetAsEntry() en el mismo tick
@@ -1007,6 +1109,7 @@ formModulo.addEventListener('submit', async (e) => {
   const botonGuardar = document.getElementById('btnGuardarModulo');
   botonGuardar.disabled = true;
   botonGuardar.textContent = 'Subiendo...';
+  mostrarCargando('Guardando módulo...');
   try {
     const id = idExistente || ('mod-' + Date.now());
     const icono = document.getElementById('fIcono').value;
@@ -1027,7 +1130,7 @@ formModulo.addEventListener('submit', async (e) => {
     // GitHub es siempre el mismo sin importar si el admin subió .zip, .rar
     // o una carpeta (que ya llega convertida a .zip desde fCarpeta).
     if (archivo && archivo.name.split('.').pop().toLowerCase() === 'rar') {
-      botonGuardar.textContent = 'Convirtiendo .rar a .zip...';
+      actualizarCargando('Convirtiendo .rar a .zip...');
       const zip = await archivoAJSZip(archivo);
       archivo = await jszipAArchivoZip(zip, archivo.name.replace(/\.rar$/i, ''));
     }
@@ -1044,7 +1147,7 @@ formModulo.addEventListener('submit', async (e) => {
     if (archivoCertificado) entradas.push({ file: archivoCertificado, carpeta: `certificados/${id}`, tipo: 'certificado' });
 
     if (entradas.length) {
-      botonGuardar.textContent = 'Subiendo a GitHub...';
+      actualizarCargando('Subiendo archivos a GitHub...');
       const subidas = await subirArchivosAGithub(entradas, `Sube módulo: ${nombre}`);
       entradas.forEach((entrada, i) => {
         if (entrada.tipo === 'archivo') {
@@ -1068,12 +1171,16 @@ formModulo.addEventListener('submit', async (e) => {
       await DB.crearModulo(id, { ...datos, estado: 'ACTIVO', fechaCreacion: new Date().toISOString() });
     }
 
+    ocultarCargando();
+    toast('exito', `Módulo "${nombre}" guardado correctamente.`);
     modalOverlay.classList.remove('show');
     renderCapacitaciones();
   } catch (err) {
     console.error('Guardar módulo:', err);
+    ocultarCargando();
     errorBox.textContent = err.message || 'No se pudo guardar el módulo.';
     errorBox.classList.add('show');
+    toast('error', err.message || 'No se pudo guardar el módulo.');
   } finally {
     botonGuardar.disabled = false;
     botonGuardar.textContent = 'Guardar módulo';
@@ -1088,51 +1195,136 @@ async function abrirModalGrupo(moduloId, nombreModulo) {
   grupoModuloId = moduloId;
   document.getElementById('grupoSubtitulo').textContent = `Módulo: ${nombreModulo}`;
   document.getElementById('formErrorGrupo').classList.remove('show');
+  document.getElementById('gTipoFiltro').value = 'todos';
   await poblarValoresFiltroGrupo();
   document.getElementById('modalGrupoOverlay').classList.add('show');
 }
 document.getElementById('btnCancelarGrupo').addEventListener('click', () => document.getElementById('modalGrupoOverlay').classList.remove('show'));
 document.getElementById('gTipoFiltro').addEventListener('change', poblarValoresFiltroGrupo);
 
+const CAMPO_POR_TIPO_GRUPO = { empresa: 'empresa', sede: 'sede', gerencia: 'gerencia' };
+
 async function poblarValoresFiltroGrupo() {
   const tipo = document.getElementById('gTipoFiltro').value;
+  const grupoValorGroup = document.getElementById('grupoValorGroup');
+  if (tipo === 'todos') { grupoValorGroup.style.display = 'none'; return; }
+  grupoValorGroup.style.display = '';
+
+  const campo = CAMPO_POR_TIPO_GRUPO[tipo];
   const usuarios = await DB.obtenerUsuarios();
-  const valores = [...new Set(usuarios.filter(u=>u.rol==='TRABAJADOR').map(u => tipo === 'area' ? u.area : u.sede).filter(Boolean))];
+  const valores = [...new Set(usuarios.filter(u => u.rol === 'TRABAJADOR').map(u => u[campo]).filter(Boolean))];
   const select = document.getElementById('gValorFiltro');
   select.innerHTML = valores.length
     ? valores.map(v => `<option value="${v}">${v}</option>`).join('')
     : `<option value="">No hay trabajadores con este dato</option>`;
 }
 
+async function asignarModuloAGrupo(tipo, valor) {
+  const usuarios = await DB.obtenerUsuarios();
+  const campo = CAMPO_POR_TIPO_GRUPO[tipo];
+  const usuariosDelGrupo = tipo === 'todos'
+    ? usuarios.filter(u => u.rol === 'TRABAJADOR')
+    : usuarios.filter(u => u.rol === 'TRABAJADOR' && u[campo] === valor);
+  await Promise.all(usuariosDelGrupo.map(u => DB.setAsignacion(u.id, grupoModuloId, true)));
+  document.getElementById('modalGrupoOverlay').classList.remove('show');
+  renderCapacitaciones();
+  return usuariosDelGrupo.length;
+}
+
 document.getElementById('btnHabilitarGrupo').addEventListener('click', async () => {
   const tipo = document.getElementById('gTipoFiltro').value;
   const valor = document.getElementById('gValorFiltro').value;
   const errorBox = document.getElementById('formErrorGrupo');
-  if (!valor) { errorBox.textContent = 'No hay ningún valor disponible para asignar.'; errorBox.classList.add('show'); return; }
+  if (tipo !== 'todos' && !valor) { errorBox.textContent = 'No hay ningún valor disponible para asignar.'; errorBox.classList.add('show'); return; }
 
-  const usuarios = await DB.obtenerUsuarios();
-  const usuariosDelGrupo = usuarios.filter(u => u.rol === 'TRABAJADOR' && (tipo === 'area' ? u.area : u.sede) === valor);
+  await conFeedback('Asignando módulo...', () => asignarModuloAGrupo(tipo, valor), {
+    exito: tipo === 'todos' ? 'Módulo asignado a todos los trabajadores.' : `Módulo asignado a trabajadores de ${tipo} "${valor}".`,
+    error: 'No se pudo asignar el módulo.'
+  });
+});
 
-  await Promise.all(usuariosDelGrupo.map(u => DB.setAsignacion(u.id, grupoModuloId, true)));
-
-  document.getElementById('modalGrupoOverlay').classList.remove('show');
-  renderCapacitaciones();
-  alert(`Módulo habilitado para ${usuariosDelGrupo.length} trabajador(es) de ${tipo === 'area' ? 'área' : 'sede'} "${valor}".`);
+document.getElementById('btnAsignarATodos').addEventListener('click', async () => {
+  await conFeedback('Asignando módulo a todos...', () => asignarModuloAGrupo('todos', null), {
+    exito: 'Módulo asignado a todos los trabajadores.',
+    error: 'No se pudo asignar el módulo.'
+  });
 });
 
 // ---------------------------------------------------------------
 // ADMIN: Usuarios
 // ---------------------------------------------------------------
+// ---------------------------------------------------------------
+// Agregado de progreso por trabajador (usado por la tabla Usuarios):
+// cruza asignaciones + historial + módulos para cada trabajador y
+// calcula un estado/puntaje/inicio/fin consolidados, más el detalle
+// fila por fila para el acordeón.
+// ---------------------------------------------------------------
+function formatoFechaHora(iso) {
+  if (!iso) return '-';
+  return new Date(iso).toLocaleString('es-PE', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+}
+
+async function datosProgresoTrabajadores() {
+  const [usuarios, asignaciones, historial, modulos] = await Promise.all([
+    DB.obtenerUsuarios(), DB.obtenerAsignaciones(), DB.obtenerHistorial(), DB.obtenerModulos()
+  ]);
+  const trabajadores = usuarios.filter(u => u.rol === 'TRABAJADOR');
+  const modulosPorId = new Map(modulos.map(m => [m.id, m]));
+  const historialPorClave = new Map(historial.map(h => [`${h.usuarioId}_${h.moduloId}`, h]));
+
+  return trabajadores.map(u => {
+    const filas = asignaciones
+      .filter(a => a.usuarioId === u.id && a.habilitado)
+      .map(a => modulosPorId.get(a.moduloId))
+      .filter(Boolean)
+      .map(m => {
+        const hist = historialPorClave.get(`${u.id}_${m.id}`) || null;
+        const estado = hist ? hist.estado : 'PENDIENTE';
+        return { modulo: m, hist, estado, puntaje: estado === 'COMPLETADO' ? (hist.puntaje ?? null) : null };
+      });
+
+    const completados = filas.filter(f => f.estado === 'COMPLETADO');
+    const enProgreso = filas.filter(f => f.estado === 'EN_PROGRESO');
+    const estadoGlobal = filas.length === 0 ? 'SIN_MODULOS'
+      : completados.length === filas.length ? 'COMPLETADO'
+      : (enProgreso.length > 0 || completados.length > 0) ? 'EN_PROGRESO' : 'PENDIENTE';
+
+    // Puntaje promedio de TODOS los módulos asignados (los no iniciados
+    // cuentan como 0 — decisión de producto confirmada).
+    const puntajeProm = filas.length ? Math.round(filas.reduce((s, f) => s + (f.puntaje ?? 0), 0) / filas.length) : null;
+    const inicios = filas.map(f => f.hist && f.hist.fechaInicio).filter(Boolean).sort();
+    const fines = filas.map(f => f.hist && f.hist.fechaFin).filter(Boolean).sort();
+    const fin = (filas.length > 0 && completados.length === filas.length) ? (fines[fines.length - 1] || null) : null;
+
+    return { usuario: u, filas, estadoGlobal, puntajeProm, inicio: inicios[0] || null, fin };
+  });
+}
+
+const ETIQUETA_ESTADO_GLOBAL = {
+  COMPLETADO: { texto: 'Completado', clase: 'badge-activo' },
+  EN_PROGRESO: { texto: 'En progreso', clase: 'badge-progreso' },
+  PENDIENTE: { texto: 'Pendiente', clase: 'badge-inactivo' },
+  SIN_MODULOS: { texto: 'Sin módulos', clase: 'badge-inactivo' }
+};
+
+const USUARIOS_POR_PAGINA = 10;
+let paginaUsuarios = 1;
+let filasExpandidas = new Set();
+let cacheDatosUsuarios = []; // último resultado de datosProgresoTrabajadores(), para el menú de acciones y el acordeón
+
 async function renderUsuarios() {
   renderSidebarAdmin('usuarios');
   document.getElementById('pageTitle').textContent = 'Usuarios';
-  document.getElementById('pageSubtitle').textContent = 'Gestión de trabajadores';
+  document.getElementById('pageSubtitle').textContent = 'Gestión de trabajadores y su progreso en los módulos';
+  paginaUsuarios = 1;
+  filasExpandidas = new Set();
 
-  const [usuarios, asignaciones] = await Promise.all([DB.obtenerUsuarios(), DB.obtenerAsignaciones()]);
-  const trabajadores = usuarios.filter(u => u.rol === 'TRABAJADOR');
+  const datos = await datosProgresoTrabajadores();
+  cacheDatosUsuarios = datos;
+  const trabajadores = datos.map(d => d.usuario);
   const activos = trabajadores.filter(u => u.estado === 'ACTIVO').length;
 
-  const areas = [...new Set(trabajadores.map(u => u.area).filter(Boolean))].sort();
+  const empresas = [...new Set(trabajadores.map(u => u.empresa).filter(Boolean))].sort();
   const sedes = [...new Set(trabajadores.map(u => u.sede).filter(Boolean))].sort();
   const gerencias = [...new Set(trabajadores.map(u => u.gerencia).filter(Boolean))].sort();
 
@@ -1143,17 +1335,18 @@ async function renderUsuarios() {
       <div class="stat-card"><div class="stat-icon" style="background:var(--gray-100);color:var(--gray-500);"><i data-lucide="x-circle" size="18"></i></div><div><div class="num">${trabajadores.length - activos}</div><div class="label">Inactivos</div></div></div>
     </div>
 
+    <div class="filters-bar">
+      <input type="text" id="buscarUsuario" placeholder="Buscar por nombre, correo o DNI...">
+      <select id="filtroEmpresa"><option value="">Todas las empresas</option>${empresas.map(e => `<option value="${e}">${e}</option>`).join('')}</select>
+      <select id="filtroSede"><option value="">Todas las sedes</option>${sedes.map(s => `<option value="${s}">${s}</option>`).join('')}</select>
+      <select id="filtroGerencia"><option value="">Todas las gerencias</option>${gerencias.map(g => `<option value="${g}">${g}</option>`).join('')}</select>
+      <button class="btn-outline" id="btnLimpiarFiltrosUsuarios">Limpiar filtros</button>
+    </div>
     <div class="toolbar">
-      <div class="filters-bar" style="margin-bottom:0;flex:1;">
-        <input type="text" id="buscarUsuario" placeholder="Buscar por nombre, correo o DNI...">
-        <select id="filtroArea"><option value="">Todas las áreas</option>${areas.map(a => `<option value="${a}">${a}</option>`).join('')}</select>
-        <select id="filtroSede"><option value="">Todas las sedes</option>${sedes.map(s => `<option value="${s}">${s}</option>`).join('')}</select>
-        <select id="filtroGerencia"><option value="">Todas las gerencias</option>${gerencias.map(g => `<option value="${g}">${g}</option>`).join('')}</select>
-        <select id="filtroEstado"><option value="">Todos los estados</option><option value="ACTIVO">Activo</option><option value="INACTIVO">Inactivo</option></select>
-      </div>
-      <div class="toolbar-right">
-        <button class="btn-outline" onclick="abrirModalImportar()"><i data-lucide="upload" size="15"></i> Importar Excel</button>
-        <button class="btn-outline" onclick="exportarUsuariosExcel()"><i data-lucide="download" size="15"></i> Exportar base de datos</button>
+      <div class="toolbar-right" style="width:100%;">
+        <button class="btn-outline" onclick="abrirModalImportar()"><i data-lucide="upload" size="15"></i> Importar datos</button>
+        <button class="btn-outline" onclick="exportarUsuariosExcel()"><i data-lucide="download" size="15"></i> Exportar datos</button>
+        <button class="btn-outline" onclick="renderUsuarios()"><i data-lucide="refresh-cw" size="15"></i> Actualizar datos</button>
         <button class="btn-save" style="display:flex;align-items:center;gap:7px;" onclick="abrirModalUsuario()"><i data-lucide="plus" size="16"></i> Nuevo trabajador</button>
       </div>
     </div>
@@ -1161,83 +1354,184 @@ async function renderUsuarios() {
     <div class="table-wrap">
       <table>
         <thead><tr>
-          <th>Usuario</th><th>Área</th><th>Empresa</th><th>Sede</th><th>Gerencia</th><th>Rol</th><th>Estado</th><th>Módulos asignados</th><th>Acciones</th>
+          <th></th><th>Trabajador</th><th>Correo</th><th>Empresa</th><th>Sede</th><th>Gerencia</th><th>Estado</th><th>Puntaje</th><th>Acciones</th>
         </tr></thead>
         <tbody id="tablaUsuariosBody"></tbody>
       </table>
     </div>
+    <div class="paginacion" id="paginacionUsuarios" style="display:flex;justify-content:center;gap:8px;margin-top:16px;"></div>
   `;
 
-  const pintar = (lista) => pintarFilasUsuarios(lista, asignaciones);
   const aplicarFiltrosUsuarios = () => {
     const q = document.getElementById('buscarUsuario').value.toLowerCase();
-    const area = document.getElementById('filtroArea').value;
+    const empresa = document.getElementById('filtroEmpresa').value;
     const sede = document.getElementById('filtroSede').value;
     const gerencia = document.getElementById('filtroGerencia').value;
-    const estado = document.getElementById('filtroEstado').value;
-    const filtrados = trabajadores.filter(u =>
+    const filtrados = datos.filter(({ usuario: u }) =>
       (nombreCompleto(u).toLowerCase().includes(q) || u.correo.toLowerCase().includes(q) || u.dni.includes(q)) &&
-      (!area || u.area === area) && (!sede || u.sede === sede) && (!gerencia || u.gerencia === gerencia) && (!estado || u.estado === estado)
+      (!empresa || u.empresa === empresa) && (!sede || u.sede === sede) && (!gerencia || u.gerencia === gerencia)
     );
-    pintar(filtrados);
+    paginaUsuarios = 1;
+    pintarFilasUsuarios(filtrados);
   };
-  pintar(trabajadores);
-  ['buscarUsuario', 'filtroArea', 'filtroSede', 'filtroGerencia', 'filtroEstado'].forEach(id => {
+  pintarFilasUsuarios(datos);
+  ['buscarUsuario', 'filtroEmpresa', 'filtroSede', 'filtroGerencia'].forEach(id => {
     document.getElementById(id).addEventListener('input', aplicarFiltrosUsuarios);
+  });
+  document.getElementById('btnLimpiarFiltrosUsuarios').addEventListener('click', () => {
+    document.getElementById('buscarUsuario').value = '';
+    document.getElementById('filtroEmpresa').value = '';
+    document.getElementById('filtroSede').value = '';
+    document.getElementById('filtroGerencia').value = '';
+    aplicarFiltrosUsuarios();
   });
   lucide.createIcons();
 }
 
-function pintarFilasUsuarios(lista, asignaciones) {
+function pintarFilasUsuarios(lista) {
+  cacheDatosUsuarios = lista;
   const tbody = document.getElementById('tablaUsuariosBody');
+  const paginacion = document.getElementById('paginacionUsuarios');
+
   if (lista.length === 0) {
     tbody.innerHTML = `<tr><td colspan="9" style="text-align:center;color:var(--gray-500);padding:30px;">No se encontraron trabajadores.</td></tr>`;
+    paginacion.innerHTML = '';
     return;
   }
-  tbody.innerHTML = lista.map(u => {
-    const totalModulos = asignaciones.filter(a => a.usuarioId === u.id && a.habilitado).length;
+
+  const totalPaginas = Math.max(1, Math.ceil(lista.length / USUARIOS_POR_PAGINA));
+  paginaUsuarios = Math.min(paginaUsuarios, totalPaginas);
+  const inicio = (paginaUsuarios - 1) * USUARIOS_POR_PAGINA;
+  const paginaActual = lista.slice(inicio, inicio + USUARIOS_POR_PAGINA);
+
+  tbody.innerHTML = paginaActual.map(d => {
+    const u = d.usuario;
+    const abierta = filasExpandidas.has(u.id);
+    const estadoInfo = ETIQUETA_ESTADO_GLOBAL[d.estadoGlobal];
+    const filaAcordeon = abierta ? `
+      <tr class="subtabla-modulos">
+        <td colspan="9">
+          <table>
+            <thead><tr><th>Módulo</th><th>Estado</th><th>Puntaje</th><th>Inicio</th><th>Fin</th><th>Certificado</th></tr></thead>
+            <tbody>
+              ${d.filas.length ? d.filas.map(f => `
+                <tr>
+                  <td style="display:flex;align-items:center;gap:8px;">${chipModulo(f.modulo, 26, 13)} ${f.modulo.nombre}</td>
+                  <td><span class="badge ${f.estado==='COMPLETADO'?'badge-activo':'badge-inactivo'}">${f.estado==='COMPLETADO'?'Completado':f.estado==='EN_PROGRESO'?'En progreso':'Pendiente'}</span></td>
+                  <td>${f.puntaje ?? '-'}</td>
+                  <td>${formatoFechaHora(f.hist && f.hist.fechaInicio)}</td>
+                  <td>${formatoFechaHora(f.hist && f.hist.fechaFin)}</td>
+                  <td>${f.estado === 'COMPLETADO' && f.modulo.certificadoUrl
+                    ? `<button class="icon-btn primary-outline" onclick="descargarCertificadoDeUsuario('${u.id}','${f.modulo.id}')"><i data-lucide="download" size="13"></i> Descargar</button>`
+                    : '<span style="color:var(--gray-400);font-size:.76rem;">-</span>'}</td>
+                </tr>`).join('') : `<tr><td colspan="6" style="text-align:center;color:var(--gray-500);">Sin módulos asignados.</td></tr>`}
+            </tbody>
+          </table>
+        </td>
+      </tr>` : '';
+
     return `
-    <tr>
+    <tr class="fila-trabajador" onclick="toggleFilaAcordeon('${u.id}')">
+      <td><i data-lucide="chevron-right" size="16" class="fila-acordeon-icon ${abierta ? 'abierto' : ''}"></i></td>
       <td>
         <div style="display:flex;align-items:center;gap:10px;">
           <div class="avatar" style="width:34px;height:34px;font-size:.7rem;flex-shrink:0;${u.fotoUrl ? `background-image:url('${u.fotoUrl}');background-size:cover;` : ''}">${u.fotoUrl ? '' : (u.primerNombre[0] + u.apellidoPaterno[0]).toUpperCase()}</div>
           <div>
             <div style="font-weight:700;font-size:.85rem;color:var(--gray-900);">${nombreCompleto(u)}</div>
-            <div style="font-size:.72rem;color:var(--gray-500);">${u.correo} · DNI ${u.dni}</div>
+            <div style="font-size:.72rem;color:var(--gray-500);">${u.rol === 'ADMIN' ? 'ADMINISTRADOR' : 'TRABAJADOR'} · DNI ${u.dni}</div>
           </div>
         </div>
       </td>
-      <td>${u.area || '-'}</td>
+      <td>${u.correo}</td>
       <td>${u.empresa || '-'}</td>
       <td>${u.sede || '-'}</td>
       <td>${u.gerencia || '-'}</td>
-      <td><span class="badge" style="background:var(--blue-100);color:var(--blue-600);">TRABAJADOR</span></td>
-      <td><span class="badge ${u.estado==='ACTIVO'?'badge-activo':'badge-inactivo'}">${u.estado==='ACTIVO'?'Activo':'Inactivo'}</span></td>
-      <td>${totalModulos}</td>
-      <td>
-        <div class="actions-cell">
-          <button onclick="abrirModalAsignar('${u.id}')" title="Asignar módulos"><i data-lucide="book-open" size="14"></i></button>
-          <button onclick="editarUsuario('${u.id}')" title="Editar"><i data-lucide="pencil" size="14"></i></button>
-          <button onclick="toggleEstadoUsuario('${u.id}')" title="Activar/Inactivar"><i data-lucide="power" size="14"></i></button>
-          <button onclick="eliminarUsuario('${u.id}','${nombreCompleto(u).replace(/'/g,"\\'")}')" title="Eliminar"><i data-lucide="trash-2" size="14"></i></button>
-        </div>
+      <td><span class="badge ${estadoInfo.clase}">${estadoInfo.texto}</span></td>
+      <td>${d.puntajeProm ?? '-'}${d.puntajeProm != null ? '%' : ''}</td>
+      <td onclick="event.stopPropagation()">
+        <button class="icon-btn" onclick="toggleMenuAcciones(event,'${u.id}')" title="Acciones"><i data-lucide="more-vertical" size="16"></i></button>
       </td>
     </tr>
+    ${filaAcordeon}
   `;
   }).join('');
+
+  paginacion.innerHTML = totalPaginas > 1 ? `
+    <button class="icon-btn" ${paginaUsuarios===1?'disabled':''} onclick="cambiarPaginaUsuarios(${paginaUsuarios-1})"><i data-lucide="chevron-left" size="15"></i></button>
+    <span style="font-size:.82rem;color:var(--gray-500);align-self:center;">Página ${paginaUsuarios} de ${totalPaginas}</span>
+    <button class="icon-btn" ${paginaUsuarios===totalPaginas?'disabled':''} onclick="cambiarPaginaUsuarios(${paginaUsuarios+1})"><i data-lucide="chevron-right" size="15"></i></button>
+  ` : '';
   lucide.createIcons();
 }
 
+function cambiarPaginaUsuarios(n) {
+  paginaUsuarios = n;
+  pintarFilasUsuarios(cacheDatosUsuarios);
+}
+
+function toggleFilaAcordeon(id) {
+  if (filasExpandidas.has(id)) filasExpandidas.delete(id); else filasExpandidas.add(id);
+  pintarFilasUsuarios(cacheDatosUsuarios);
+}
+
+// Menú de Acciones: un solo botón por fila, un único elemento flotante
+// compartido (fuera del overflow de la tabla) que se reposiciona y
+// repuebla según el trabajador clickeado.
+function toggleMenuAcciones(evento, usuarioId) {
+  evento.stopPropagation();
+  const menu = document.getElementById('menuAccionesFlotante');
+  const yaAbiertoParaEste = menu.dataset.usuarioId === usuarioId && !menu.classList.contains('hidden');
+  menu.classList.add('hidden');
+  if (yaAbiertoParaEste) { menu.dataset.usuarioId = ''; return; }
+
+  const d = cacheDatosUsuarios.find(x => x.usuario.id === usuarioId);
+  if (!d) return;
+  const u = d.usuario;
+  const nombreEsc = nombreCompleto(u).replace(/'/g, "\\'");
+
+  menu.innerHTML = `
+    <button onclick="abrirModalAsignar('${u.id}')"><i data-lucide="book-open" size="14"></i> Asignar módulos</button>
+    <button onclick="editarUsuario('${u.id}')"><i data-lucide="pencil" size="14"></i> Editar</button>
+    <button onclick="toggleEstadoUsuario('${u.id}')"><i data-lucide="power" size="14"></i> ${u.estado === 'ACTIVO' ? 'Inactivar' : 'Activar'}</button>
+    <button class="danger" onclick="eliminarUsuario('${u.id}','${nombreEsc}')"><i data-lucide="trash-2" size="14"></i> Eliminar</button>
+  `;
+  const rect = evento.currentTarget.getBoundingClientRect();
+  menu.style.top = `${rect.bottom + 4}px`;
+  menu.style.left = `${Math.max(8, rect.right - 190)}px`;
+  menu.dataset.usuarioId = usuarioId;
+  menu.classList.remove('hidden');
+  lucide.createIcons();
+}
+document.addEventListener('click', () => {
+  const menu = document.getElementById('menuAccionesFlotante');
+  menu.classList.add('hidden');
+  menu.dataset.usuarioId = '';
+});
+
+async function descargarCertificadoDeUsuario(usuarioId, moduloId) {
+  await conFeedback('Generando certificado...', async () => {
+    const [usuario, modulo, hist] = await Promise.all([
+      DB.obtenerUsuario(usuarioId), DB.obtenerModulo(moduloId), DB.obtenerHistorialRegistro(usuarioId, moduloId)
+    ]);
+    if (!usuario || !modulo || !hist) throw new Error('No se encontró el registro de este módulo para este trabajador.');
+    await descargarCertificadoAdmin(usuario, modulo, hist.fechaFin);
+  }, { exito: 'Certificado descargado.', error: 'No se pudo generar el certificado.' });
+}
+
 async function toggleEstadoUsuario(id) {
-  const u = await DB.obtenerUsuario(id);
-  await DB.actualizarUsuario(id, { estado: u.estado === 'ACTIVO' ? 'INACTIVO' : 'ACTIVO' });
-  renderUsuarios();
+  await conFeedback('Actualizando estado...', async () => {
+    const u = await DB.obtenerUsuario(id);
+    await DB.actualizarUsuario(id, { estado: u.estado === 'ACTIVO' ? 'INACTIVO' : 'ACTIVO' });
+    renderUsuarios();
+  }, { exito: 'Estado actualizado.', error: 'No se pudo actualizar el estado.' });
 }
 
 async function eliminarUsuario(id, nombre) {
   if (!confirm(`¿Eliminar a ${nombre}? Se borran sus asignaciones e historial. Esta acción no se puede deshacer.\n\nNota: la cuenta de acceso (Firebase Auth) de esta persona no se elimina automáticamente — requiere Admin SDK, fuera de alcance de esta versión.`)) return;
-  await DB.eliminarUsuario(id);
-  renderUsuarios();
+  await conFeedback('Eliminando trabajador...', async () => {
+    await DB.eliminarUsuario(id);
+    renderUsuarios();
+  }, { exito: `${nombre} eliminado correctamente.`, error: 'No se pudo eliminar el trabajador.' });
 }
 
 // Modal nuevo/editar trabajador
@@ -1297,11 +1591,15 @@ document.getElementById('formUsuario').addEventListener('submit', async (e) => {
 
   const botonGuardar = e.target.querySelector('button[type=submit]');
   botonGuardar.disabled = true;
+  mostrarCargando(idExistente ? 'Guardando cambios...' : 'Creando cuenta del trabajador...');
 
   try {
     if (!idExistente) {
       const yaExiste = await DB.obtenerUsuario(dni);
-      if (yaExiste) { errorBox.textContent = `Ya existe un usuario con el DNI ${dni}.`; errorBox.classList.add('show'); return; }
+      if (yaExiste) {
+        ocultarCargando();
+        errorBox.textContent = `Ya existe un usuario con el DNI ${dni}.`; errorBox.classList.add('show'); return;
+      }
       if (!password) password = dni;
 
       await crearCuentaAuthParaUsuario(correo, password);
@@ -1317,12 +1615,17 @@ document.getElementById('formUsuario').addEventListener('submit', async (e) => {
       // resetear la contraseña de alguien, usa "Restablecer contraseña" en
       // el login con el DNI de esa persona (envía el enlace a su correo).
     }
+    ocultarCargando();
+    toast('exito', idExistente ? 'Trabajador actualizado.' : 'Trabajador creado correctamente.');
     modalUsuarioOverlay.classList.remove('show');
     renderUsuarios();
   } catch (err) {
     console.error('Guardar usuario:', err);
-    errorBox.textContent = err.code === 'auth/email-already-in-use' ? 'Ya existe una cuenta con ese correo.' : (err.message || 'No se pudo guardar el usuario.');
+    ocultarCargando();
+    const msg = err.code === 'auth/email-already-in-use' ? 'Ya existe una cuenta con ese correo.' : (err.message || 'No se pudo guardar el usuario.');
+    errorBox.textContent = msg;
     errorBox.classList.add('show');
+    toast('error', msg);
   } finally {
     botonGuardar.disabled = false;
   }
@@ -1377,7 +1680,7 @@ function renderDrawerAsignarBody() {
     body.innerHTML = actuales.length
       ? actuales.map(m => `
         <div class="modulo-check-card">
-          <div class="icn"><i data-lucide="book-open" size="16"></i></div>
+          ${chipModulo(m, 32, 15)}
           <div style="flex:1;"><strong>${m.nombre}</strong><div style="font-size:.74rem;color:var(--gray-500);">${m.categoria || 'Sin categoría'}</div></div>
         </div>`).join('')
       : `<div class="empty-state"><p>Sin asignaciones actuales.</p></div>`;
@@ -1387,7 +1690,7 @@ function renderDrawerAsignarBody() {
       <div class="drawer-search"><input type="text" id="drawerBuscarModulo" placeholder="Buscar módulo..." value="${drawerFiltroTexto.replace(/"/g,'&quot;')}"></div>
       ${filtrados.length ? filtrados.map(m => `
         <label class="modulo-check-card">
-          <div class="icn"><i data-lucide="book-open" size="16"></i></div>
+          ${chipModulo(m, 32, 15)}
           <div style="flex:1;"><strong>${m.nombre}</strong><div style="font-size:.74rem;color:var(--gray-500);">${m.categoria || 'Sin categoría'}</div></div>
           <input type="checkbox" ${drawerSeleccionPendiente.has(m.id) ? 'checked' : ''} onchange="toggleDrawerSeleccion('${m.id}', this.checked)">
         </label>`).join('') : `<div class="empty-state"><p>No hay módulos que coincidan.</p></div>`}
@@ -1421,10 +1724,12 @@ document.getElementById('btnCerrarDrawerAsignar').addEventListener('click', () =
 document.getElementById('btnCancelarDrawerAsignar').addEventListener('click', () => document.getElementById('drawerAsignarOverlay').classList.remove('show'));
 
 document.getElementById('btnGuardarDrawerAsignar').addEventListener('click', async () => {
-  const modulos = drawerModulosCache || [];
-  await Promise.all(modulos.map(m => DB.setAsignacion(drawerUsuarioId, m.id, drawerSeleccionPendiente.has(m.id))));
-  document.getElementById('drawerAsignarOverlay').classList.remove('show');
-  renderUsuarios();
+  await conFeedback('Guardando asignaciones...', async () => {
+    const modulos = drawerModulosCache || [];
+    await Promise.all(modulos.map(m => DB.setAsignacion(drawerUsuarioId, m.id, drawerSeleccionPendiente.has(m.id))));
+    document.getElementById('drawerAsignarOverlay').classList.remove('show');
+    renderUsuarios();
+  }, { exito: 'Asignaciones guardadas.', error: 'No se pudo guardar las asignaciones.' });
 });
 
 // ---------------------------------------------------------------
@@ -1461,14 +1766,17 @@ document.getElementById('btnProcesarImportar').addEventListener('click', () => {
   const reader = new FileReader();
   reader.onload = async (e) => {
     botonProcesar.disabled = true;
+    mostrarCargando('Leyendo archivo Excel...');
     try {
       const wb = XLSX.read(e.target.result, { type: 'array' });
       const sheet = wb.Sheets[wb.SheetNames[0]];
       const filas = XLSX.utils.sheet_to_json(sheet, { defval: '' });
 
-      let creados = 0, actualizados = 0, errores = 0;
+      let creados = 0, actualizados = 0, errores = 0, procesadas = 0;
 
       for (const fila of filas) {
+        procesadas++;
+        actualizarCargando(`Importando fila ${procesadas} de ${filas.length}...`);
         const nombres = String(fila['Nombres'] || '').trim();
         const apellidos = String(fila['Apellidos'] || '').trim();
         const dni = String(fila['DNI'] || '').trim();
@@ -1507,11 +1815,17 @@ document.getElementById('btnProcesarImportar').addEventListener('click', () => {
         }
       }
 
-      successBox.textContent = `Importación completa: ${creados} creado(s), ${actualizados} actualizado(s)${errores ? `, ${errores} fila(s) con error` : ''}.`;
+      ocultarCargando();
+      const resumen = `Importación completa: ${creados} creado(s), ${actualizados} actualizado(s)${errores ? `, ${errores} fila(s) con error` : ''}.`;
+      successBox.textContent = resumen;
       successBox.classList.add('show');
+      toast(errores ? 'error' : 'exito', resumen);
     } catch (err) {
-      errorBox.textContent = 'No se pudo procesar el archivo. Verifica que sea un Excel válido con las columnas indicadas.';
+      ocultarCargando();
+      const msg = 'No se pudo procesar el archivo. Verifica que sea un Excel válido con las columnas indicadas.';
+      errorBox.textContent = msg;
       errorBox.classList.add('show');
+      toast('error', msg);
     } finally {
       botonProcesar.disabled = false;
     }
@@ -1523,43 +1837,68 @@ document.getElementById('btnProcesarImportar').addEventListener('click', () => {
 // Exportar base de datos de trabajadores a Excel
 // ---------------------------------------------------------------
 async function exportarUsuariosExcel() {
-  const usuarios = await DB.obtenerUsuarios();
-  const trabajadores = usuarios.filter(u => u.rol === 'TRABAJADOR');
+  await conFeedback('Generando archivo Excel...', async () => {
+    const datos = await datosProgresoTrabajadores();
 
-  const filas = trabajadores.map(u => ({
-    'Nombres': [u.primerNombre, u.segundoNombre].filter(Boolean).join(' '),
-    'Apellidos': [u.apellidoPaterno, u.apellidoMaterno].filter(Boolean).join(' '),
-    'DNI': u.dni,
-    'Correo': u.correo,
-    'Empresa': u.empresa || '',
-    'Sede': u.sede || '',
-    'Gerencia': u.gerencia || '',
-    'Rol': u.rol,
-    'Estado': u.estado
-  }));
+    const filas = datos.map(({ usuario: u, estadoGlobal, puntajeProm, inicio, fin }) => ({
+      'Nombres': [u.primerNombre, u.segundoNombre].filter(Boolean).join(' '),
+      'Apellidos': [u.apellidoPaterno, u.apellidoMaterno].filter(Boolean).join(' '),
+      'DNI': u.dni,
+      'Correo': u.correo,
+      'Área': u.area || '',
+      'Empresa': u.empresa || '',
+      'Sede': u.sede || '',
+      'Gerencia': u.gerencia || '',
+      'Rol': u.rol,
+      'Estado cuenta': u.estado,
+      'Estado módulos': ETIQUETA_ESTADO_GLOBAL[estadoGlobal].texto,
+      'Puntaje promedio': puntajeProm ?? '',
+      'Inicio': inicio || '',
+      'Fin': fin || ''
+    }));
 
-  const ws = XLSX.utils.json_to_sheet(filas);
-  const wb = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb, ws, 'Trabajadores');
-  XLSX.writeFile(wb, `trabajadores_tramarsa_${new Date().toISOString().slice(0,10)}.xlsx`);
+    const ws = XLSX.utils.json_to_sheet(filas);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Trabajadores');
+    XLSX.writeFile(wb, `trabajadores_tramarsa_${new Date().toISOString().slice(0,10)}.xlsx`);
+  }, { exito: 'Archivo Excel generado.', error: 'No se pudo generar el archivo Excel.' });
 }
 
 // ---------------------------------------------------------------
 // Arranque
 // ---------------------------------------------------------------
+function ocultarPantallaCarga() {
+  const v = document.getElementById('viewCargando');
+  if (v) v.remove();
+}
+
 window.addEventListener('DOMContentLoaded', () => {
   lucide.createIcons();
-  if (!firebaseEstaConfigurado()) { mostrarErrorFirebaseNoConfigurado(); return; }
+  if (!firebaseEstaConfigurado()) {
+    document.getElementById('viewLogin').classList.remove('hidden');
+    ocultarPantallaCarga();
+    mostrarErrorFirebaseNoConfigurado();
+    return;
+  }
 
   // Firebase Auth restaura la sesión desde IndexedDB de forma asíncrona:
   // auth.currentUser puede seguir siendo null justo al cargar la página
   // aunque haya una sesión válida. Por eso se espera a onAuthStateChanged
   // (su primera resolución) en vez de comprobarlo de forma síncrona —
   // si no, un simple refresh mandaba de vuelta al login por error.
+  // Mientras tanto se muestra #viewCargando (nunca el login): con sesión
+  // válida la restauración es transparente, sin flash del formulario.
   const dejarDeEscuchar = onAuthStateChanged(auth, async (user) => {
     dejarDeEscuchar();
     const sesion = getSesion();
-    if (sesion && user) { await iniciarApp(); return; }
+    if (sesion && user) {
+      await iniciarApp();
+      ocultarPantallaCarga();
+      return;
+    }
+
+    document.getElementById('viewLogin').classList.remove('hidden');
+    ocultarPantallaCarga();
 
     // Bootstrap: la plataforma arranca sin ningún dato en Firestore. Si
     // todavía no existe ningún ADMIN, se ofrece crear el primero directo
@@ -1630,10 +1969,12 @@ document.getElementById('formCrearAdmin').addEventListener('submit', async (e) =
 Object.assign(window, {
   cerrarSesion,
   renderDashboardTrabajador, renderMisModulosTrabajador, renderCertificadosTrabajador,
-  renderProgresoTrabajador, renderPerfilTrabajador,
-  renderCapacitaciones, renderUsuarios, renderAsignaciones, renderReportes, renderConfiguracion,
+  renderPerfilTrabajador,
+  renderCapacitaciones, renderUsuarios, renderConfiguracion,
   abrirModalModulo, toggleEstadoModulo, eliminarModulo, abrirModalGrupo,
   abrirModalUsuario, editarUsuario, toggleEstadoUsuario, eliminarUsuario, abrirModalAsignar,
   cambiarTabDrawerAsignar, toggleDrawerSeleccion,
-  abrirModalImportar, exportarUsuariosExcel, exportarReporteExcel
+  abrirModalImportar, exportarUsuariosExcel,
+  toggleFilaAcordeon, toggleMenuAcciones, cambiarPaginaUsuarios, descargarCertificadoDeUsuario,
+  cambiarPaginaMisModulos, cambiarPaginaCertificados
 });

@@ -7,7 +7,7 @@
    Firestore.
    ============================================================ */
 
-import { getSesion, nombreCompleto, renderDashboardTrabajador } from './app.js';
+import { getSesion, nombreCompleto, renderDashboardTrabajador, mostrarCargando, ocultarCargando, toast } from './app.js';
 import * as DB from './db-firestore.js';
 import { archivoAJSZip } from './modulo-loader/package-adapters.js';
 import { buscarIndexHtml } from './modulo-loader/virtual-asset-resolver.js';
@@ -19,6 +19,7 @@ const RP = {
   zip: null,
   driver: null,           // instancia del driver ganador (ver modulo-loader/drivers.js)
   destructorDriver: null,
+  modoRevision: false,    // módulo ya COMPLETADO: "Volver a ver" no re-evalúa ni reescribe el historial
   preguntas: [],
   indicePregunta: 0,
   respuestasCorrectas: 0,
@@ -38,14 +39,14 @@ function limpiarParaArchivo(texto) {
     .replace(/[^a-zA-Z0-9]+/g, '_')
     .replace(/^_+|_+$/g, '');
 }
-function nombreArchivoCertificado(usuario, fechaEmisionISO) {
+function nombreArchivoCertificado(usuario, modulo, fechaEmisionISO) {
   const fecha = new Date(fechaEmisionISO || Date.now());
   const aaaa = fecha.getFullYear();
   const mm = String(fecha.getMonth() + 1).padStart(2, '0');
   const dd = String(fecha.getDate()).padStart(2, '0');
   const nombres = limpiarParaArchivo([usuario.primerNombre, usuario.segundoNombre].filter(Boolean).join(' '));
   const apellidos = limpiarParaArchivo([usuario.apellidoPaterno, usuario.apellidoMaterno].filter(Boolean).join(' '));
-  const numero = (RP.modulo && RP.modulo.numeroModulo) || RP.moduloId;
+  const numero = (modulo && modulo.numeroModulo) || (modulo && modulo.id);
   return `${aaaa}-${mm}-${dd}_${nombres}_${apellidos}_m${numero}`;
 }
 
@@ -148,14 +149,18 @@ async function montarDriverDelModulo() {
 
   // Reanudar exactamente donde quedó: el driver arranca en pasoInicial y
   // permite navegar libre hasta ahí sin volver a exigir el audio completo.
+  // Si el módulo ya está COMPLETADO (modo "Volver a ver"), la navegación
+  // es totalmente libre y al terminar NO se re-evalúa ni se toca el
+  // historial: se vuelve a mostrar el resultado/certificado ya obtenido.
   const usuario = getSesion();
   const hist = await DB.obtenerHistorialRegistro(usuario.dni, RP.moduloId);
-  const pasoInicial = (hist && hist.pasoMaximoAlcanzado) || 0;
+  RP.modoRevision = !!(hist && hist.estado === 'COMPLETADO');
+  const pasoInicial = RP.modoRevision ? 0 : ((hist && hist.pasoMaximoAlcanzado) || 0);
 
   RP.destructorDriver = await driver.montar(contenedor, RP.zip, rutaIndex, {
     onAvance: (paso, total) => guardarAvanceHistorial(paso, total),
     onFinalizado: () => prepararEvaluacionOFinalizar()
-  }, RP.urlsTemporales, pasoInicial);
+  }, RP.urlsTemporales, pasoInicial, RP.modoRevision);
 }
 
 function mostrarCargandoReproductor() {
@@ -198,6 +203,17 @@ async function leerJsonDelZip(ruta) {
 // Evaluación: banco de preguntas aleatorio, secuencial, sin retroceder
 // ---------------------------------------------------------------
 async function prepararEvaluacionOFinalizar() {
+  // Modo "Volver a ver": el módulo ya está aprobado — al terminar el
+  // contenido no se vuelve a generar el cuestionario ni un certificado
+  // nuevo, solo se re-muestra el resultado ya registrado (misma fecha
+  // de emisión, mismo puntaje, mismo certificado).
+  if (RP.modoRevision) {
+    const usuario = getSesion();
+    const hist = await DB.obtenerHistorialRegistro(usuario.dni, RP.moduloId);
+    await renderResultadoAprobado(hist ? hist.puntaje : null);
+    return;
+  }
+
   const banco = (RP.modulo.preguntas && RP.modulo.preguntas.length) ? RP.modulo.preguntas : await leerJsonDelZip('questions.json');
 
   if (!banco || !Array.isArray(banco) || banco.length === 0) {
@@ -294,6 +310,10 @@ async function finalizarModulo(puntaje) {
   const usuario = getSesion();
   const aprobado = puntaje === null || puntaje >= UMBRAL_APROBACION;
 
+  // Defensa extra: en modo revisión jamás se reescribe el historial (la
+  // fecha de emisión del certificado es la de la PRIMERA aprobación).
+  if (RP.modoRevision) { await renderResultadoAprobado(puntaje); return; }
+
   if (aprobado) {
     await DB.actualizarHistorial(usuario.dni, RP.moduloId, {
       estado: 'COMPLETADO', puntaje, avancePct: 100, fechaFin: new Date().toISOString()
@@ -309,13 +329,16 @@ async function renderResultadoAprobado(puntaje) {
   document.getElementById('reproductorPaso').textContent = '';
   const usuario = getSesion();
 
+  // Presentación tipo diploma: solo el mensaje arriba, el certificado
+  // grande y centrado como protagonista, y 2 botones abajo (Descargar /
+  // Volver al inicio) — sin visor PDF ni barras de herramientas.
   document.getElementById('reproductorBody').innerHTML = `
-    <div class="rp-card rp-resultado">
-      <div class="icon-grande" style="background:var(--green-100);color:var(--green-500);"><i data-lucide="check" size="34"></i></div>
-      <h2 style="font-size:1.3rem;font-weight:800;color:var(--navy-900);margin-bottom:6px;">¡Módulo completado!</h2>
-      <p style="color:var(--gray-500);font-size:.9rem;">${puntaje !== null ? `Obtuviste ${puntaje}% en la evaluación.` : 'Contenido revisado correctamente.'}</p>
+    <div class="rp-card rp-resultado rp-resultado-cert">
+      <h2 style="font-size:1.3rem;font-weight:800;color:var(--navy-900);margin-bottom:4px;">¡Módulo completado!${puntaje !== null ? ` Obtuviste ${puntaje}% en la evaluación.` : ''}</h2>
       <div id="certContainer"></div>
-      <button class="btn-save" style="margin-top:10px;" onclick="cerrarReproductor()">Volver al inicio</button>
+      <div id="certAcciones" style="display:flex;gap:12px;justify-content:center;margin-top:14px;">
+        <button class="btn-save" onclick="cerrarReproductor()">Volver al inicio</button>
+      </div>
     </div>
   `;
   lucide.createIcons();
@@ -364,17 +387,36 @@ async function localizarTextosEnPdf(bytes, textosBuscados) {
   return encontrados;
 }
 
-// Certificado en PDF editable: cubre los placeholders "NOMBRES APELLIDOS",
-// "MÓDULO" y la fecha con un rectángulo blanco y dibuja el valor real
-// centrado en su misma posición, sin alterar el resto del diseño.
-async function intentarGenerarCertificado(usuario, fechaEmisionISO) {
-  if (!RP.modulo.certificadoUrl) {
-    await intentarGenerarCertificadoLegacyPNG(usuario, fechaEmisionISO);
-    return;
+// Renderiza la primera página de un PDF (bytes) como imagen PNG, para
+// mostrar el certificado como un diploma limpio en vez del visor PDF.
+async function renderizarPdfComoImagen(bytes) {
+  try {
+    pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+    // copia: pdf.js transfiere (y vacía) el buffer que recibe
+    const pdf = await pdfjsLib.getDocument({ data: bytes.slice() }).promise;
+    const pagina = await pdf.getPage(1);
+    const base = pagina.getViewport({ scale: 1 });
+    const escala = Math.min(3, 1600 / base.width); // nítido sin exagerar memoria
+    const viewport = pagina.getViewport({ scale: escala });
+    const canvas = document.createElement('canvas');
+    canvas.width = viewport.width;
+    canvas.height = viewport.height;
+    await pagina.render({ canvasContext: canvas.getContext('2d'), viewport }).promise;
+    return canvas.toDataURL('image/png');
+  } catch (e) {
+    console.error('No se pudo renderizar el certificado como imagen:', e);
+    return null;
   }
+}
 
+// Genera los bytes del PDF final con los campos dinámicos reemplazados
+// (negrita, centrados sobre su misma posición). Pura: no toca RP ni el
+// DOM — la usan tanto el reproductor (con su propia UI de resultado)
+// como la descarga directa que dispara el admin desde Usuarios.
+// Devuelve null si la plantilla no contiene ninguno de los placeholders.
+async function generarBytesPdfCertificado(usuario, modulo, fechaEmisionISO) {
   const nombreUsuario = nombreCompleto(usuario).toUpperCase();
-  const nombreModulo = (RP.modulo.nombre || '').toUpperCase();
+  const nombreModulo = (modulo.nombre || '').toUpperCase();
   const fechaTexto = new Date(fechaEmisionISO || Date.now()).toLocaleDateString('es-PE', { day: '2-digit', month: 'long', year: 'numeric' });
 
   const reemplazos = {
@@ -385,55 +427,103 @@ async function intentarGenerarCertificado(usuario, fechaEmisionISO) {
     'DD de MM del AAAAA': fechaTexto
   };
 
-  try {
-    const certArchivo = await descargarArchivoDesdeUrl(RP.modulo.certificadoUrl, RP.modulo.certificadoNombre);
-    const bytes = new Uint8Array(await certArchivo.arrayBuffer());
-    // pdf.js toma posesión (transferable) del ArrayBuffer que recibe y lo deja
-    // vacío; se le pasa una copia para no perder los bytes que pdf-lib
-    // necesita justo después.
-    const posiciones = await localizarTextosEnPdf(bytes.slice(), Object.keys(reemplazos));
+  const certArchivo = await descargarArchivoDesdeUrl(modulo.certificadoUrl, modulo.certificadoNombre);
+  const bytes = new Uint8Array(await certArchivo.arrayBuffer());
+  // pdf.js toma posesión (transferable) del ArrayBuffer que recibe y lo deja
+  // vacío; se le pasa una copia para no perder los bytes que pdf-lib
+  // necesita justo después.
+  const posiciones = await localizarTextosEnPdf(bytes.slice(), Object.keys(reemplazos));
 
-    const pdfDoc = await PDFLib.PDFDocument.load(bytes);
-    const pagina = pdfDoc.getPages()[0];
-    // Arial no es una fuente base embebible en el navegador sin licenciar el
-    // archivo TTF; Helvetica es el sustituto estándar métricamente compatible.
-    const fuente = await pdfDoc.embedFont(PDFLib.StandardFonts.Helvetica);
+  const pdfDoc = await PDFLib.PDFDocument.load(bytes);
+  const pagina = pdfDoc.getPages()[0];
+  // Arial no es una fuente base embebible en el navegador sin licenciar el
+  // archivo TTF; Helvetica es el sustituto estándar métricamente compatible.
+  // Los campos dinámicos van en negrita para destacar sobre la plantilla.
+  const fuente = await pdfDoc.embedFont(PDFLib.StandardFonts.HelveticaBold);
 
-    let algunReemplazo = false;
-    for (const [placeholder, valor] of Object.entries(reemplazos)) {
-      const ocurrencias = posiciones[placeholder];
-      if (!ocurrencias || !ocurrencias.length) continue;
-      for (const pos of ocurrencias) {
-        algunReemplazo = true;
-        const tamanoFuente = Math.max(8, (pos.height || 14) * 0.82);
-        pagina.drawRectangle({ x: pos.x - 3, y: pos.y - 3, width: pos.width + 6, height: (pos.height || 14) + 6, color: PDFLib.rgb(1, 1, 1) });
-        const anchoTexto = fuente.widthOfTextAtSize(valor, tamanoFuente);
-        const centroX = pos.x + pos.width / 2;
-        pagina.drawText(valor, { x: centroX - anchoTexto / 2, y: pos.y, size: tamanoFuente, font: fuente, color: PDFLib.rgb(0.024, 0.149, 0.314) });
-      }
+  let algunReemplazo = false;
+  for (const [placeholder, valor] of Object.entries(reemplazos)) {
+    const ocurrencias = posiciones[placeholder];
+    if (!ocurrencias || !ocurrencias.length) continue;
+    for (const pos of ocurrencias) {
+      algunReemplazo = true;
+      const tamanoFuente = Math.max(8, (pos.height || 14) * 0.82);
+      pagina.drawRectangle({ x: pos.x - 3, y: pos.y - 3, width: pos.width + 6, height: (pos.height || 14) + 6, color: PDFLib.rgb(1, 1, 1) });
+      const anchoTexto = fuente.widthOfTextAtSize(valor, tamanoFuente);
+      const centroX = pos.x + pos.width / 2;
+      pagina.drawText(valor, { x: centroX - anchoTexto / 2, y: pos.y, size: tamanoFuente, font: fuente, color: PDFLib.rgb(0.024, 0.149, 0.314) });
     }
+  }
 
-    if (!algunReemplazo) {
+  if (!algunReemplazo) return null;
+  return pdfDoc.save();
+}
+
+// Certificado en PDF editable: cubre los placeholders "NOMBRES APELLIDOS",
+// "MÓDULO" y la fecha con un rectángulo blanco y dibuja el valor real
+// centrado en su misma posición, sin alterar el resto del diseño.
+async function intentarGenerarCertificado(usuario, fechaEmisionISO) {
+  mostrarCargando('Generando certificado...');
+  if (!RP.modulo.certificadoUrl) {
+    await intentarGenerarCertificadoLegacyPNG(usuario, fechaEmisionISO);
+    ocultarCargando();
+    return;
+  }
+
+  try {
+    const bytesFinal = await generarBytesPdfCertificado(usuario, RP.modulo, fechaEmisionISO);
+    if (!bytesFinal) {
+      ocultarCargando();
       document.getElementById('certContainer').innerHTML = `<p style="font-size:.8rem;color:var(--orange-500);margin-top:14px;">La plantilla de certificado no contiene los textos "NOMBRES APELLIDOS" / "MÓDULO" / fecha, no se pudo personalizar.</p>`;
       return;
     }
 
-    const bytesFinal = await pdfDoc.save();
     const blobFinal = new Blob([bytesFinal], { type: 'application/pdf' });
     const url = URL.createObjectURL(blobFinal);
     RP.urlsTemporales.push(url);
 
-    document.getElementById('certContainer').innerHTML = `
-      <iframe src="${url}" style="width:100%;height:420px;border:1px solid var(--gray-200);border-radius:12px;margin:18px 0;"></iframe>
-      <a href="${url}" download="${nombreArchivoCertificado(usuario, fechaEmisionISO)}.pdf" class="btn-outline" style="text-decoration:none;justify-content:center;display:flex;">
-        <i data-lucide="download" size="15"></i>&nbsp; Descargar certificado
-      </a>
-    `;
+    // Presentación tipo diploma: se renderiza la página del PDF final a
+    // una imagen (pdf.js → canvas) en vez de incrustar el visor PDF del
+    // navegador (fondo negro, toolbar de zoom/impresión, panel lateral).
+    const imgDiploma = await renderizarPdfComoImagen(bytesFinal);
+    document.getElementById('certContainer').innerHTML = imgDiploma
+      ? `<img src="${imgDiploma}" class="cert-diploma" alt="Certificado">`
+      : `<p style="font-size:.8rem;color:var(--gray-500);margin-top:14px;">Certificado generado. Usa el botón para descargarlo.</p>`;
+
+    const botonDescargar = `
+      <a href="${url}" download="${nombreArchivoCertificado(usuario, RP.modulo, fechaEmisionISO)}.pdf" class="btn-save" style="text-decoration:none;display:inline-flex;align-items:center;gap:7px;">
+        <i data-lucide="download" size="15"></i> Descargar certificado
+      </a>`;
+    const acciones = document.getElementById('certAcciones');
+    if (acciones) acciones.insertAdjacentHTML('afterbegin', botonDescargar);
+    else document.getElementById('certContainer').insertAdjacentHTML('beforeend', `<div style="display:flex;justify-content:center;margin-top:12px;">${botonDescargar}</div>`);
     lucide.createIcons();
+    ocultarCargando();
+    toast('exito', 'Certificado generado correctamente.');
   } catch (e) {
     console.error('No se pudo generar el certificado PDF:', e);
+    ocultarCargando();
+    toast('error', 'No se pudo generar el certificado en PDF.');
     document.getElementById('certContainer').innerHTML = `<p style="font-size:.8rem;color:var(--red-500);margin-top:14px;">No se pudo generar el certificado en PDF.</p>`;
   }
+}
+
+// Descarga directa del certificado, usada por el admin desde Usuarios
+// (no abre el reproductor ni el panel de resultado: solo genera el PDF
+// con la fecha de emisión ya registrada en el historial y lo descarga).
+export async function descargarCertificadoAdmin(usuario, modulo, fechaEmisionISO) {
+  if (!modulo.certificadoUrl) throw new Error('Este módulo no tiene una plantilla de certificado cargada.');
+  const bytesFinal = await generarBytesPdfCertificado(usuario, modulo, fechaEmisionISO);
+  if (!bytesFinal) throw new Error('La plantilla de certificado no contiene los campos esperados.');
+  const blob = new Blob([bytesFinal], { type: 'application/pdf' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `${nombreArchivoCertificado(usuario, modulo, fechaEmisionISO)}.pdf`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 15000);
 }
 
 // Compatibilidad: módulos antiguos que traían certificate/template.png +
@@ -472,7 +562,7 @@ async function intentarGenerarCertificadoLegacyPNG(usuario, fechaEmisionISO) {
     const dataUrl = canvas.toDataURL('image/png');
     document.getElementById('certContainer').innerHTML = `
       <img src="${dataUrl}" class="rp-cert-preview" alt="Certificado">
-      <a href="${dataUrl}" download="${nombreArchivoCertificado(usuario, fechaEmisionISO)}.png" class="btn-outline" style="text-decoration:none;justify-content:center;display:flex;">
+      <a href="${dataUrl}" download="${nombreArchivoCertificado(usuario, RP.modulo, fechaEmisionISO)}.png" class="btn-outline" style="text-decoration:none;justify-content:center;display:flex;">
         <i data-lucide="download" size="15"></i>&nbsp; Descargar certificado
       </a>
     `;
@@ -500,12 +590,12 @@ async function verCertificadoStandalone(moduloId, alVolver) {
   document.getElementById('reproductorTitulo').textContent = modulo.nombre;
   document.getElementById('reproductorPaso').textContent = '';
   document.getElementById('reproductorBody').innerHTML = `
-    <div class="rp-card rp-resultado">
-      <div class="icon-grande" style="background:var(--green-100);color:var(--green-500);"><i data-lucide="award" size="34"></i></div>
-      <h2 style="font-size:1.3rem;font-weight:800;color:var(--navy-900);margin-bottom:6px;">Certificado</h2>
-      <p style="color:var(--gray-500);font-size:.9rem;">${modulo.nombre}</p>
+    <div class="rp-card rp-resultado rp-resultado-cert">
+      <h2 style="font-size:1.3rem;font-weight:800;color:var(--navy-900);margin-bottom:4px;">${modulo.nombre}</h2>
       <div id="certContainer"></div>
-      <button class="btn-save" style="margin-top:10px;" onclick="cerrarReproductor()">Cerrar</button>
+      <div id="certAcciones" style="display:flex;gap:12px;justify-content:center;margin-top:14px;">
+        <button class="btn-cancel" onclick="cerrarReproductor()">Cerrar</button>
+      </div>
     </div>`;
   lucide.createIcons();
   await intentarGenerarCertificado(usuario, hist.fechaFin);
@@ -519,7 +609,7 @@ function cerrarReproductor() {
   RP.driver = null;
   RP.urlsTemporales.forEach(u => URL.revokeObjectURL(u));
   RP.urlsTemporales = [];
-  RP.zip = null; RP.preguntas = [];
+  RP.zip = null; RP.preguntas = []; RP.modoRevision = false;
   document.getElementById('viewReproductor').classList.add('hidden');
   (RP.alSalir || renderDashboardTrabajador)();
   RP.alSalir = null;

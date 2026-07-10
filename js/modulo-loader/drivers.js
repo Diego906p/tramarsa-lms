@@ -149,12 +149,15 @@ export class DriverLaminasLegacy {
     return laminas;
   }
 
-  async montar(contenedor, zip, rutaIndex, callbacks, urlsTemporales, pasoInicial = 0) {
+  async montar(contenedor, zip, rutaIndex, callbacks, urlsTemporales, pasoInicial = 0, navegacionLibre = false) {
     this.contenedor = contenedor;
     this.callbacks = callbacks;
     this.laminas = await this.construirLaminas(zip, urlsTemporales);
     this.indiceLamina = Math.max(0, Math.min(pasoInicial, this.laminas.length - 1));
-    this.maximoAlcanzado = this.indiceLamina;
+    // Modo revisión (módulo ya completado): todo el contenido cuenta como
+    // ya conquistado, se navega libre sin esperar los audios de nuevo.
+    this.navegacionLibre = navegacionLibre;
+    this.maximoAlcanzado = navegacionLibre ? this.laminas.length - 1 : this.indiceLamina;
     this.renderPaso();
     return () => this.destruir();
   }
@@ -211,7 +214,7 @@ export class DriverLaminasLegacy {
     // Ya se llegó antes hasta acá (o más adelante): puede avanzar de
     // inmediato sin esperar el audio otra vez. El audio igual se
     // reproduce para quien quiera repasarlo, solo que no bloquea.
-    if (this.indiceLamina < this.maximoAlcanzado) this.habilitarSiguiente();
+    if (this.navegacionLibre || this.indiceLamina < this.maximoAlcanzado) this.habilitarSiguiente();
   }
 
   habilitarSiguiente() {
@@ -340,11 +343,12 @@ export class DriverLaminasLegacy {
 // (o si esa diapositiva ya había sido alcanzada antes: mismo criterio
 // de "no adelantar, sí retroceder y volver" que el otro driver).
 //
-// Si es contenido de terceros que no conoce este contrato, degrada con
-// elegancia: tras un tiempo de gracia sin 'modulo:iniciado', se muestra
-// el iframe como caja negra + un botón manual para continuar.
+// Si es contenido de terceros que no conoce este contrato, NO hay
+// atajo: tras el tiempo de gracia sin 'modulo:iniciado' se muestra un
+// aviso de incompatibilidad — nunca un botón para saltar a la
+// evaluación sin haber recorrido el contenido (regla anti-trampa).
 // ---------------------------------------------------------------
-const GRACIA_SIN_SDK_MS = 6000;
+const GRACIA_SIN_SDK_MS = 8000;
 
 export class DriverIndexHtml {
   constructor() {
@@ -355,6 +359,7 @@ export class DriverIndexHtml {
     this.handlerMensaje = null;
     this.modoControlado = false;
     this.pasoInicial = 0;
+    this.navegacionLibre = false;
     this.indiceActual = 0;
     this.totalDiapositivas = 0;
     this.maximoAlcanzado = 0;
@@ -366,9 +371,10 @@ export class DriverIndexHtml {
     return Object.keys(zip.files).some(p => !zip.files[p].dir && /(^|\/)index\.html?$/i.test(p));
   }
 
-  async montar(contenedor, zip, rutaIndex, callbacks, urlsTemporalesCompartidas, pasoInicial = 0) {
+  async montar(contenedor, zip, rutaIndex, callbacks, urlsTemporalesCompartidas, pasoInicial = 0, navegacionLibre = false) {
     this.callbacks = callbacks;
     this.pasoInicial = pasoInicial;
+    this.navegacionLibre = navegacionLibre;
     this.maximoAlcanzado = pasoInicial;
     const { url, urlsTemporales } = await construirDocumentoModulo(zip, rutaIndex);
     this.urlsTemporales = urlsTemporales;
@@ -383,8 +389,10 @@ export class DriverIndexHtml {
             style="width:100%;height:100%;border:0;background:#fff;"></iframe>
         </div>
         <div id="rpControlsBarIndexHtml"></div>
-        <div id="rpAvanceManual" class="rp-controls" style="display:none;margin-top:10px;">
-          <button class="btn-save" id="btnMarcarVisto">Marcar contenido como visto <i data-lucide="arrow-right" size="14"></i></button>
+        <div id="rpAvisoIncompatible" style="display:none;margin-top:10px;text-align:center;font-size:.8rem;color:var(--orange-500);">
+          <i data-lucide="alert-triangle" size="14"></i>
+          Este módulo no es compatible con el reproductor del LMS (no integra la API de comunicación).
+          No es posible completarlo hasta que el administrador lo actualice.
         </div>
       </div>
     `;
@@ -406,7 +414,7 @@ export class DriverIndexHtml {
           if (Number.isFinite(datos.total) && Number.isFinite(datos.indice)) {
             this.indiceActual = datos.indice;
             this.totalDiapositivas = datos.total;
-            this.audioListoIndiceActual = this.indiceActual < this.maximoAlcanzado;
+            this.audioListoIndiceActual = this.navegacionLibre || this.indiceActual < this.maximoAlcanzado;
             this.renderControles();
             this.callbacks.onAvance(datos.indice + 1, datos.total + 1);
           }
@@ -427,16 +435,14 @@ export class DriverIndexHtml {
     window.addEventListener('message', this.handlerMensaje);
 
     // Módulos sin integración del SDK (contenido de terceros) nunca
-    // van a mandar 'modulo:iniciado'; en ese caso, tras un tiempo de
-    // gracia, se ofrece el botón de avance manual (caja negra).
+    // van a mandar 'modulo:iniciado'. En ese caso NO se ofrece ningún
+    // atajo (antes existía "Marcar contenido como visto", eliminado por
+    // permitir saltarse el contenido): solo se avisa la incompatibilidad.
     this.timeoutGracia = setTimeout(() => {
       if (this.modoControlado) return;
-      const bloque = document.getElementById('rpAvanceManual');
-      if (bloque) bloque.style.display = 'flex';
+      const aviso = document.getElementById('rpAvisoIncompatible');
+      if (aviso) { aviso.style.display = 'block'; lucide.createIcons(); }
     }, GRACIA_SIN_SDK_MS);
-
-    const btnManual = document.getElementById('btnMarcarVisto');
-    if (btnManual) btnManual.addEventListener('click', () => this.callbacks.onFinalizado());
 
     return () => this.destruir();
   }

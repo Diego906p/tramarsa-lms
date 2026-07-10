@@ -75,10 +75,16 @@ export async function subirArchivosAGithub(entradas, mensajeCommit) {
     return { ruta, sha: blob.sha };
   }));
 
-  // Mover la rama sí depende de su estado actual. Se reintenta con
-  // backoff exponencial por si otra subida (de otra pestaña/persona)
-  // choca justo en el mismo instante.
-  const MAX_INTENTOS = 5;
+  // Mover la rama sí depende de su estado actual. Cada intento vuelve a
+  // leer la rama y reconstruye árbol+commit desde ahí (nunca reutiliza
+  // el commit/tree de un intento anterior) — pero aun así puede fallar
+  // varias veces seguidas: la API de referencias de GitHub tiene lag de
+  // propagación real (lectura justo después de una escritura puede
+  // devolver el sha viejo), medido hasta varios segundos. Por eso son
+  // más intentos con más margen de espera que un caso "choque entre 2
+  // pestañas" típico necesitaría.
+  const MAX_INTENTOS = 8;
+  const ESPERA_MAXIMA_MS = 8000;
   let ultimoError = null;
   for (let intento = 0; intento < MAX_INTENTOS; intento++) {
     try {
@@ -115,7 +121,8 @@ export async function subirArchivosAGithub(entradas, mensajeCommit) {
     } catch (e) {
       ultimoError = e;
       if (!/(not a fast forward|reference cannot be updated)/i.test(e.message)) throw e;
-      await new Promise(r => setTimeout(r, 500 * Math.pow(2, intento) + Math.random() * 300));
+      const espera = Math.min(ESPERA_MAXIMA_MS, 500 * Math.pow(2, intento)) + Math.random() * 300;
+      await new Promise(r => setTimeout(r, espera));
     }
   }
   throw ultimoError;

@@ -76,7 +76,7 @@ button { font-family:inherit; cursor:pointer; }
 .hint-box strong { color:var(--gray-700); }
 
 /* ===================== APP SHELL ===================== */
-#viewApp { display:flex; min-height:100vh; }
+#viewApp { display:flex; height:100vh; }
 .sidebar { width:260px; flex-shrink:0; background:var(--navy-900); color:white; display:flex; flex-direction:column; padding:22px 18px; }
 .sidebar .logo { display:flex; align-items:center; gap:10px; padding:0 4px 6px; }
 .sidebar .logo .flag-icon { width:auto; height:38px; display:flex; align-items:center; justify-content:center; }
@@ -94,7 +94,7 @@ button { font-family:inherit; cursor:pointer; }
 .sync-box button { margin-top:6px; width:100%; background:var(--blue-600); color:white; border:none; border-radius:8px; padding:7px; font-size:.74rem; font-weight:600; }
 .sync-box.connected button { background:rgba(255,255,255,.12); }
 
-.main { flex:1; display:flex; flex-direction:column; min-width:0; }
+.main { flex:1; display:flex; flex-direction:column; min-width:0; height:100vh; overflow-y:auto; }
 .topbar { height:72px; background:white; border-bottom:1px solid var(--gray-200); display:flex; align-items:center; justify-content:space-between; padding:0 30px; flex-shrink:0; }
 .topbar-title h1 { font-size:1.2rem; font-weight:800; color:var(--navy-900); }
 .topbar-title p { font-size:.78rem; color:var(--gray-500); }
@@ -166,6 +166,17 @@ button { font-family:inherit; cursor:pointer; }
 .grid-modulos { display:grid; grid-template-columns:repeat(auto-fill,minmax(270px,1fr)); gap:16px; }
 .modulo-card { background:white; border-radius:16px; border:1px solid var(--gray-100); box-shadow:var(--shadow-sm); overflow:hidden; display:flex; flex-direction:column; }
 .modulo-cover { aspect-ratio:16/9; width:100%; background:var(--blue-100); background-size:cover; background-position:center; display:flex; align-items:center; justify-content:center; color:var(--blue-600); }
+/* Chip de identidad del módulo: ícono elegido sobre su color, se muestra
+   junto al nombre en todas las vistas (misma idea que los stat-icon). */
+.mod-chip { border-radius:10px; display:flex; align-items:center; justify-content:center; color:#fff; flex-shrink:0; width:36px; height:36px; }
+/* Galería visual de íconos (modal módulo): tarjetas clicables, sin dropdown de texto */
+.icon-gallery { display:grid; grid-template-columns:repeat(auto-fill,minmax(52px,1fr)); gap:8px; margin-top:4px; }
+.icon-gallery-item { aspect-ratio:1; border:2px solid var(--gray-200); border-radius:10px; display:flex; align-items:center; justify-content:center; cursor:pointer; color:var(--gray-500); transition:border-color var(--transition), background var(--transition), color var(--transition); }
+.icon-gallery-item:hover { border-color:var(--blue-600); }
+.icon-gallery-item.active { border-color:var(--blue-600); background:var(--blue-100); color:var(--blue-600); }
+/* Certificado presentado como diploma (sin visor PDF) */
+.cert-diploma { width:100%; max-width:880px; border-radius:10px; box-shadow:0 24px 60px -24px rgba(6,30,78,.45); margin:20px auto 6px; display:block; }
+.rp-resultado-cert { max-width:980px; width:100%; }
 .modulo-body { padding:15px; flex:1; display:flex; flex-direction:column; gap:7px; }
 .modulo-body h3 { font-size:.94rem; font-weight:700; color:var(--navy-900); }
 .modulo-body p { font-size:.8rem; color:var(--gray-500); line-height:1.4; }
@@ -222,10 +233,12 @@ button { font-family:inherit; cursor:pointer; }
 .switch input:checked + .slider::before { transform:translateX(18px); }
 
 /* ===================== USUARIOS (admin) ===================== */
-.stat-grid-usuarios { display:grid; grid-template-columns:repeat(5,1fr); gap:14px; margin-bottom:20px; }
+.stat-grid-usuarios { display:grid; grid-template-columns:repeat(auto-fit,minmax(0,1fr)); gap:14px; margin-bottom:20px; }
 .filters-bar { display:flex; gap:10px; margin-bottom:16px; flex-wrap:wrap; align-items:center; }
 .filters-bar input[type=text], .filters-bar select { border:1px solid var(--gray-200); border-radius:10px; padding:9px 13px; font-size:.84rem; font-family:'Inter',sans-serif; }
-.filters-bar input[type=text] { flex:1; min-width:200px; }
+.filters-bar input[type=text] { flex:2; min-width:200px; }
+.filters-bar select { flex:1; min-width:140px; }
+.filters-bar button { flex:0 0 auto; }
 .table-wrap { background:white; border-radius:var(--radius-lg); box-shadow:var(--shadow-sm); border:1px solid var(--gray-100); overflow:auto; }
 table { width:100%; border-collapse:collapse; min-width:920px; }
 th { text-align:left; font-size:.7rem; text-transform:uppercase; letter-spacing:.4px; color:var(--gray-500); padding:12px 14px; border-bottom:1px solid var(--gray-100); background:var(--gray-50); white-space:nowrap; }
@@ -234,6 +247,7 @@ tr:last-child td { border-bottom:none; }
 .badge { display:inline-flex; align-items:center; gap:5px; font-size:.72rem; font-weight:600; padding:3px 9px; border-radius:99px; }
 .badge-activo { background:var(--green-100); color:var(--green-500); }
 .badge-inactivo { background:var(--gray-100); color:var(--gray-500); }
+.badge-progreso { background:var(--blue-100); color:var(--blue-600); }
 .pass-cell { display:flex; align-items:center; gap:6px; font-family:monospace; }
 .pass-cell button { background:none; border:none; color:var(--gray-400); display:flex; }
 .actions-cell { display:flex; gap:6px; }
@@ -270,14 +284,67 @@ tr:last-child td { border-bottom:none; }
 .rp-cert-preview { max-width:100%; border-radius:12px; border:1px solid var(--gray-200); margin:18px 0; }
 .spin { animation: rp-spin 1s linear infinite; }
 @keyframes rp-spin { from { transform:rotate(0deg); } to { transform:rotate(360deg); } }
+
+/* ============================================================
+   Loader global + toasts — feedback de operaciones lentas
+   (subir módulo, crear usuario, importar Excel, certificados...)
+   ============================================================ */
+#loaderGlobal { position:fixed; inset:0; background:rgba(6,20,50,.55); backdrop-filter:blur(2px); z-index:900; display:flex; align-items:center; justify-content:center; }
+#loaderGlobal.hidden { display:none; }
+.loader-card { background:#fff; border-radius:16px; padding:28px 36px; box-shadow:0 24px 60px -20px rgba(6,20,50,.5); display:flex; flex-direction:column; align-items:center; gap:14px; min-width:260px; text-align:center; }
+.loader-card i { color:var(--blue-600); }
+.loader-card p { font-size:.9rem; font-weight:700; color:var(--navy-900); }
+
+#toastContainer { position:fixed; top:20px; right:20px; z-index:950; display:flex; flex-direction:column; gap:10px; max-width:360px; }
+
+/* Menú de Acciones (Usuarios): un solo botón, dropdown flotante fuera
+   del overflow de la tabla para que nunca quede recortado. */
+.acciones-menu-flotante { position:fixed; z-index:500; background:#fff; border:1px solid var(--gray-200); border-radius:10px; box-shadow:0 16px 40px -16px rgba(6,20,50,.35); min-width:190px; overflow:hidden; }
+.acciones-menu-flotante.hidden { display:none; }
+.acciones-menu-flotante button { width:100%; text-align:left; padding:10px 14px; border:none; background:none; font-size:.82rem; font-weight:600; display:flex; align-items:center; gap:9px; color:var(--gray-700); cursor:pointer; }
+.acciones-menu-flotante button:hover { background:var(--gray-50); }
+.acciones-menu-flotante button.danger { color:var(--red-500); }
+
+/* Fila de trabajador expandible (acordeón de módulos asignados) */
+.fila-trabajador { cursor:pointer; }
+.fila-trabajador:hover { background:var(--gray-50); }
+.fila-acordeon-icon { transition:transform var(--transition); }
+.fila-acordeon-icon.abierto { transform:rotate(90deg); }
+.subtabla-modulos { background:var(--gray-50); }
+.subtabla-modulos table { width:100%; border-collapse:collapse; }
+.subtabla-modulos th { font-size:.7rem; text-transform:uppercase; letter-spacing:.04em; color:var(--gray-500); padding:8px 14px; text-align:left; }
+.subtabla-modulos td { padding:9px 14px; font-size:.8rem; border-top:1px solid var(--gray-200); }
+.toast { display:flex; align-items:flex-start; gap:10px; padding:13px 16px; border-radius:12px; background:#fff; box-shadow:0 16px 40px -16px rgba(6,20,50,.35); font-size:.84rem; font-weight:600; color:var(--navy-900); border-left:4px solid var(--gray-300); animation:toast-in .25s ease-out; }
+.toast.exito { border-left-color:var(--green-500); }
+.toast.exito i { color:var(--green-500); }
+.toast.error { border-left-color:var(--red-500); }
+.toast.error i { color:var(--red-500); }
+.toast span { flex:1; line-height:1.4; }
+@keyframes toast-in { from { opacity:0; transform:translateX(24px); } to { opacity:1; transform:translateX(0); } }
 </style>
 </head>
 <body>
 
+<div id="loaderGlobal" class="hidden">
+  <div class="loader-card">
+    <i data-lucide="loader-circle" size="34" class="spin"></i>
+    <p id="loaderGlobalMensaje">Procesando...</p>
+  </div>
+</div>
+<div id="toastContainer"></div>
+<div id="menuAccionesFlotante" class="acciones-menu-flotante hidden"></div>
+
 <!-- ============================================================ -->
 <!-- VISTA: LOGIN -->
 <!-- ============================================================ -->
-<div id="viewLogin">
+<!-- Pantalla de carga neutra: se muestra mientras Firebase Auth restaura
+     la sesión (asíncrono). Evita el "flash" del login al refrescar con
+     sesión válida: el usuario nunca ve el formulario si sigue logueado. -->
+<div id="viewCargando" style="position:fixed;inset:0;background:var(--gray-50);display:flex;align-items:center;justify-content:center;z-index:300;">
+  <i data-lucide="loader-circle" class="spin" style="color:var(--blue-600);"></i>
+</div>
+
+<div id="viewLogin" class="hidden">
   <section class="hero-col">
     <div class="hero-logo">
       <div class="flag-icon"><img src="https://raw.githubusercontent.com/Diego906p/imagenes/refs/heads/main/images/logo_tram_white.png" alt="Grupo Tramarsa"></div>
@@ -410,26 +477,14 @@ tr:last-child td { border-bottom:none; }
       <div class="form-group"><label>Nombre del módulo</label><input type="text" id="fNombre" required placeholder="Ej. Inducción de Seguridad y Salud en el Trabajo"></div>
       <div class="form-group"><label>Descripción</label><textarea id="fDescripcion" placeholder="Breve descripción del contenido"></textarea></div>
       <div class="form-group"><label>Categoría</label><input type="text" id="fCategoria" placeholder="Ej. Seguridad, Ética, Operaciones"></div>
-      <div class="form-row">
-        <div class="form-group">
-          <label>Ícono (cuando no hay miniatura)</label>
-          <select id="fIcono">
-            <option value="book-open">Libro</option>
-            <option value="shield-check">Escudo</option>
-            <option value="hard-hat">Casco de seguridad</option>
-            <option value="users">Personas</option>
-            <option value="heart-handshake">Convivencia</option>
-            <option value="graduation-cap">Graduación</option>
-            <option value="scale">Ética / normativa</option>
-            <option value="flame">Riesgo / incendio</option>
-            <option value="megaphone">Comunicación</option>
-            <option value="file-text">Documento</option>
-          </select>
-        </div>
-        <div class="form-group">
-          <label>Color de portada</label>
-          <input type="color" id="fColor" value="#2563eb" style="height:42px;padding:4px;">
-        </div>
+      <div class="form-group">
+        <label>Ícono</label>
+        <input type="hidden" id="fIcono" value="book-open">
+        <div class="icon-gallery" id="galeriaIconos"></div>
+      </div>
+      <div class="form-group">
+        <label>Color</label>
+        <input type="color" id="fColor" value="#2563eb" style="height:42px;padding:4px;width:100%;">
       </div>
       <div class="form-group">
         <label>Miniatura del módulo (imagen 16:9, opcional)</label>
@@ -449,10 +504,6 @@ tr:last-child td { border-bottom:none; }
           <p>Haz clic o arrastra aquí el archivo .zip / .rar / carpeta</p>
           <div class="file-name" id="nombreArchivo"></div>
         </div>
-        <button type="button" class="btn-outline" id="btnElegirCarpetaModulo" style="margin-top:8px;">
-          <i data-lucide="folder-open" size="15"></i>&nbsp; O elegir una carpeta
-        </button>
-        <input type="file" id="fCarpeta" webkitdirectory directory multiple style="display:none;">
       </div>
       <div class="form-group">
         <label>Preguntas de la evaluación (.txt, .docx o .json)</label>
@@ -538,26 +589,29 @@ tr:last-child td { border-bottom:none; }
   </aside>
 </div>
 
-<!-- Modal: asignar módulo por Área/Sede -->
+<!-- Modal: asignar módulo por Empresa/Sede/Gerencia -->
 <div class="modal-overlay" id="modalGrupoOverlay">
   <div class="modal">
-    <h2>Asignar por Área / Sede</h2>
+    <h2>Asignar por Empresa, Sede, Gerencia</h2>
     <p style="font-size:.82rem;color:var(--gray-500);margin-bottom:14px;" id="grupoSubtitulo"></p>
     <div class="form-group">
       <label>Filtrar por</label>
       <select id="gTipoFiltro">
-        <option value="area">Área</option>
+        <option value="todos">Todos</option>
+        <option value="empresa">Empresa</option>
         <option value="sede">Sede</option>
+        <option value="gerencia">Gerencia</option>
       </select>
     </div>
-    <div class="form-group">
+    <div class="form-group" id="grupoValorGroup">
       <label>Valor</label>
       <select id="gValorFiltro"></select>
     </div>
     <div class="form-error" id="formErrorGrupo"></div>
     <div class="modal-actions">
       <button type="button" class="btn-cancel" id="btnCancelarGrupo">Cancelar</button>
-      <button type="button" class="btn-save" id="btnHabilitarGrupo">Habilitar para el grupo</button>
+      <button type="button" class="btn-outline" id="btnAsignarATodos">Asignar a todos</button>
+      <button type="button" class="btn-save" id="btnHabilitarGrupo">Asignar</button>
     </div>
   </div>
 </div>
