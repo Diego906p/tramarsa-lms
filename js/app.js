@@ -261,6 +261,29 @@ function restaurarScroll() {
 }
 
 // ---------------------------------------------------------------
+// Sidebar off-canvas (mobile/tablet ≤880px). En desktop la clase
+// 'abierta' nunca se agrega ni tiene efecto (fuera del media query).
+// ---------------------------------------------------------------
+function cerrarSidebarMovil() {
+  document.getElementById('sidebar').classList.remove('abierta');
+  document.getElementById('sidebarOverlay').classList.remove('show');
+}
+function abrirSidebarMovil() {
+  document.getElementById('sidebar').classList.add('abierta');
+  document.getElementById('sidebarOverlay').classList.add('show');
+}
+document.getElementById('btnAbrirSidebar').addEventListener('click', abrirSidebarMovil);
+document.getElementById('sidebarOverlay').addEventListener('click', cerrarSidebarMovil);
+// Cualquier clic dentro del sidebar (navegar o cerrar sesión) lo cierra
+// en mobile — en desktop no tiene efecto visual (ya está siempre visible).
+document.getElementById('sidebar').addEventListener('click', (e) => {
+  if (e.target.closest('.nav-item, .logout-item')) cerrarSidebarMovil();
+});
+window.addEventListener('resize', () => {
+  if (window.innerWidth > 880) cerrarSidebarMovil();
+});
+
+// ---------------------------------------------------------------
 // Login
 // ---------------------------------------------------------------
 document.getElementById('togglePass').addEventListener('click', () => {

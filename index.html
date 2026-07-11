@@ -96,8 +96,11 @@ button { font-family:inherit; cursor:pointer; }
 
 .main { flex:1; display:flex; flex-direction:column; min-width:0; height:100vh; overflow-y:auto; }
 .topbar { height:72px; background:white; border-bottom:1px solid var(--gray-200); display:flex; align-items:center; justify-content:space-between; padding:0 30px; flex-shrink:0; }
+.topbar-title { display:flex; align-items:center; gap:10px; min-width:0; }
 .topbar-title h1 { font-size:1.2rem; font-weight:800; color:var(--navy-900); }
 .topbar-title p { font-size:.78rem; color:var(--gray-500); }
+.btn-hamburguesa { display:none; background:none; border:none; color:var(--navy-900); padding:6px; margin:-6px 0 -6px -6px; flex-shrink:0; }
+.sidebar-overlay { display:none; }
 .user-chip { display:flex; align-items:center; gap:10px; }
 .avatar { width:36px; height:36px; border-radius:50%; background:var(--navy-900); color:white; display:flex; align-items:center; justify-content:center; font-weight:700; font-size:.8rem; }
 .user-chip .who strong { font-size:.82rem; display:block; }
@@ -335,6 +338,97 @@ tr:last-child td { border-bottom:none; }
 .toast.error i { color:var(--red-500); }
 .toast span { flex:1; line-height:1.4; }
 @keyframes toast-in { from { opacity:0; transform:translateX(24px); } to { opacity:1; transform:translateX(0); } }
+
+/* ============================================================
+   RESPONSIVE — Fase 1: app shell (sidebar off-canvas + topbar)
+   Identidad visual intacta arriba de 880px: nada de lo siguiente
+   se activa en desktop, solo reordena/oculta bajo el breakpoint.
+   ============================================================ */
+@media (max-width: 880px) {
+  .btn-hamburguesa { display:flex; align-items:center; justify-content:center; }
+  .sidebar {
+    position:fixed; inset:0 auto 0 0; z-index:70; width:260px; max-width:82vw;
+    transform:translateX(-100%); transition:transform var(--transition);
+    box-shadow:0 0 0 rgba(0,0,0,0);
+  }
+  .sidebar.abierta { transform:translateX(0); box-shadow:24px 0 48px -20px rgba(6,20,50,.35); }
+  .sidebar-overlay {
+    display:none; position:fixed; inset:0; background:rgba(6,20,50,.45); z-index:65;
+  }
+  .sidebar-overlay.show { display:block; }
+  .topbar { padding:0 16px; }
+  .topbar-title p { display:none; } /* subtítulo ocupa espacio que no sobra en mobile */
+  .user-chip .who { display:none; } /* solo avatar visible: nombre/correo ya están en el sidebar */
+  .content { padding:18px 16px; }
+}
+@media (max-width: 480px) {
+  .topbar-title h1 { font-size:1.02rem; }
+}
+
+/* ============================================================
+   RESPONSIVE — Fase 2: login (hero-col se oculta, form ocupa 100%)
+   ============================================================ */
+@media (max-width: 880px) {
+  .hero-col { display:none; }
+  .form-col { padding:28px 20px; }
+}
+@media (max-width: 400px) {
+  .login-card h2 { font-size:1.3rem; }
+}
+
+/* ============================================================
+   RESPONSIVE — Fase 3: grids/tarjetas/formularios
+   ============================================================ */
+@media (max-width: 880px) {
+  .stat-grid { grid-template-columns:repeat(2,1fr); }
+  .stat-grid-usuarios { grid-template-columns:repeat(2,1fr); }
+  .form-row { grid-template-columns:1fr; }
+  .form-grid-2x2 { grid-template-columns:1fr; }
+  .grid-modulos { grid-template-columns:repeat(auto-fill,minmax(220px,1fr)); }
+}
+@media (max-width: 560px) {
+  .stat-grid { grid-template-columns:1fr; }
+  .stat-grid-usuarios { grid-template-columns:1fr; }
+  .grid-modulos { grid-template-columns:1fr; }
+}
+
+/* ============================================================
+   RESPONSIVE — Fase 4: tabla Usuarios + drawer de asignación
+   La tabla ya scrollea horizontal (overflow:auto + min-width:920px);
+   solo se afina el scroll táctil y se agranda el área de toque de
+   'Acciones' — la estructura de columnas no cambia (ver sección 13
+   del estado del proyecto: mostrar/ocultar columnas queda para una
+   fase futura si hiciera falta).
+   ============================================================ */
+@media (max-width: 880px) {
+  .table-wrap { -webkit-overflow-scrolling:touch; }
+  .drawer { width:100vw; }
+  .filters-bar input[type=text] { flex:1 1 100%; }
+  .filters-bar select { flex:1 1 auto; }
+}
+
+/* ============================================================
+   RESPONSIVE — Fase 5: modales + reproductor de módulo
+   (algunos contenedores del reproductor usan style="" inline en
+   index.html — se pisan con la misma especificidad de media query
+   + selector de ID, sin tocar el markup ni la lógica).
+   ============================================================ */
+@media (max-width: 880px) {
+  .modal { padding:18px; max-height:94vh; }
+  .modal.wide { max-width:100%; }
+  .modal-actions { flex-wrap:wrap; }
+  #viewReproductor header { padding:0 14px !important; }
+  #reproductorTitulo { font-size:.85rem; max-width:52vw; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  #reproductorPaso { display:none; } /* redundante con el paso mostrado dentro del contenido en mobile */
+  #reproductorBody { padding:14px !important; }
+  .rp-card { padding:20px; }
+}
+@media (max-width: 480px) {
+  .rp-controls { flex-wrap:wrap; }
+  .rp-controls .btn-save { flex:1 1 100%; order:2; }
+  .rp-dwell-bar { order:1; flex-basis:100%; }
+  #btnIndexHtmlPrev { order:0; }
+}
 </style>
 </head>
 <body>
@@ -481,10 +575,14 @@ tr:last-child td { border-bottom:none; }
 <!-- VISTA: APP -->
 <!-- ============================================================ -->
 <div id="viewApp" class="hidden">
+  <div class="sidebar-overlay" id="sidebarOverlay"></div>
   <aside class="sidebar" id="sidebar"></aside>
   <div class="main">
     <header class="topbar">
-      <div class="topbar-title"><h1 id="pageTitle"></h1><p id="pageSubtitle"></p></div>
+      <div class="topbar-title">
+        <button type="button" class="btn-hamburguesa" id="btnAbrirSidebar" aria-label="Abrir menú"><i data-lucide="menu" size="20"></i></button>
+        <div><h1 id="pageTitle"></h1><p id="pageSubtitle"></p></div>
+      </div>
       <div class="user-chip">
         <div class="avatar" id="avatarIniciales">--</div>
         <div class="who"><strong id="nombreUsuario"></strong><span id="correoUsuario"></span></div>
