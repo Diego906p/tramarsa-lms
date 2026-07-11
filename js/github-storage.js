@@ -83,8 +83,12 @@ export async function subirArchivosAGithub(entradas, mensajeCommit) {
   // devolver el sha viejo), medido hasta varios segundos. Por eso son
   // más intentos con más margen de espera que un caso "choque entre 2
   // pestañas" típico necesitaría.
-  const MAX_INTENTOS = 8;
-  const ESPERA_MAXIMA_MS = 8000;
+  // Subido de 8 a 12 intentos (y el tope de espera de 8s a 10s): el lag de
+  // propagación de la API de referencias de GitHub rara vez pero a veces
+  // supera el presupuesto anterior — con esto el usuario ya no necesita
+  // volver a presionar "Guardar módulo" a mano en esos casos.
+  const MAX_INTENTOS = 12;
+  const ESPERA_MAXIMA_MS = 10000;
   let ultimoError = null;
   for (let intento = 0; intento < MAX_INTENTOS; intento++) {
     try {

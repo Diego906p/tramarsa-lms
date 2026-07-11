@@ -6,12 +6,24 @@
    fonts/json/lo-que-sea con rutas relativas normales: el LMS nunca
    inspecciona ni asume esa estructura.
 
-   Estrategia en 2 pasadas (necesarias ambas, no una u otra):
-   1) Estática: reemplaza en el texto de cada archivo html/css/js/json
+   Estrategia en 3 pasadas (las 3 necesarias, no una u otra):
+   1) Inlineo de <script src="local.js"> / <link rel="stylesheet"
+      href="local.css">: el contenido real se inyecta directo en el
+      HTML en vez de referenciarlo por Blob URL. Motivo (limitación
+      real del navegador, no una elección de diseño): el iframe corre
+      con origen opaco (sandbox sin allow-same-origin, aislamiento a
+      propósito) y un <script src="blob:...">/<link href="blob:...">
+      NO carga si el blob fue creado desde otro origen — a diferencia
+      de <img>/<audio>/<video> con blob:, que sí funcionan cross-origin
+      sin problema. Por eso un módulo de una sola pieza (todo inline,
+      sin carpetas css/js separadas) funcionaba y uno con css/js como
+      archivos aparte no — no era un bug del módulo, era esto.
+   2) Estática: reemplaza en el texto de cada archivo html/css/js/json
       cualquier ocurrencia literal de una ruta relativa conocida por su
-      Blob URL — cubre <link>, <script src>, <img src>, url() de CSS,
-      manifest.json, etc. declarados directamente en el código fuente.
-   2) Runtime: un shim inyectado como primer <script> del documento
+      Blob URL — cubre <img src>, url() de CSS, manifest.json, etc.
+      (todo lo que no sea el <script src>/<link> ya inlineado en el
+      paso 1, que para esos casos sí es seguro usar Blob URL).
+   3) Runtime: un shim inyectado como primer <script> del documento
       intercepta fetch/XHR y los setters de .src de imagen/audio/video/
       script — cubre rutas armadas dinámicamente en JS (ej. un módulo
       que hace `'img/Diapositiva' + n + '.png'` en tiempo de ejecución,
@@ -22,6 +34,45 @@ const EXT_TEXTO = new Set(['html', 'htm', 'css', 'js', 'mjs', 'json', 'svg']);
 
 function extension(ruta) {
   return ruta.split('.').pop().toLowerCase();
+}
+
+// blob.type NO es confiable como fuente de MIME: JSZip deja Blob.type en
+// '' (string vacío) al leer un archivo agregado vía zip.file(ruta, archivo)
+// sin pasar {mimeType} explícito — y package-adapters.js (carpeta arrastrada
+// y .rar) nunca lo pasa. Confirmado con bytes idénticos, blob.type='' desde
+// JSZip vs 'audio/mpeg' desde fetch() directo del mismo archivo, incluso
+// pasando un File ya tipado. Con blob.type='' caía a 'application/octet-stream'
+// — <img> lo tolera (sniffea bytes), <audio>/<video> no: nunca se vuelven
+// reproducibles y no disparan error (silencio total). Por eso se determina
+// el MIME por extensión, nunca por blob.type.
+const MIME_POR_EXTENSION = {
+  html: 'text/html', htm: 'text/html', css: 'text/css',
+  js: 'text/javascript', mjs: 'text/javascript', json: 'application/json',
+  svg: 'image/svg+xml', png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg',
+  gif: 'image/gif', webp: 'image/webp',
+  mp3: 'audio/mpeg', wav: 'audio/wav', ogg: 'audio/ogg', m4a: 'audio/mp4',
+  mp4: 'video/mp4', webm: 'video/webm',
+  woff: 'font/woff', woff2: 'font/woff2', ttf: 'font/ttf'
+};
+function mimePorRuta(ruta) {
+  return MIME_POR_EXTENSION[extension(ruta)] || 'application/octet-stream';
+}
+
+// Convierte un Blob a data: URI (base64). Los assets del módulo (img/audio/
+// video/css/js referenciados por ruta relativa) se entregan así en vez de
+// blob: — ver nota "Partición de blob: URLs" más abajo, en construirDocumentoModulo,
+// para el motivo. En trozos de 32 KB para no pisar el límite de argumentos
+// de String.fromCharCode.apply en archivos grandes (mismo patrón que
+// github-storage.js).
+async function blobADataUri(blob, ruta) {
+  const buffer = await blob.arrayBuffer();
+  const bytes = new Uint8Array(buffer);
+  const CHUNK = 0x8000;
+  let binario = '';
+  for (let i = 0; i < bytes.length; i += CHUNK) {
+    binario += String.fromCharCode.apply(null, bytes.subarray(i, i + CHUNK));
+  }
+  return 'data:' + mimePorRuta(ruta) + ';base64,' + btoa(binario);
 }
 
 /**
@@ -82,6 +133,15 @@ function shimRuntime(mapaPlano) {
       notificarDiapositiva: function(indice,total){ parent.postMessage({ tipo:'modulo:diapositiva', indice:indice, total:total }, '*'); },
       notificarAudioFinalizado: function(){ parent.postMessage({ tipo:'modulo:audioFinalizado' }, '*'); },
       notificarAvance: function(pct){ parent.postMessage({ tipo:'modulo:avance', pct:pct }, '*'); },
+      // Señal puramente visual — barra realmente fluida: se manda UNA vez
+      // al empezar cada lámina (no un tick por frame), con el destino y la
+      // duración real restante del audio. El LMS arma una transición CSS de
+      // esa duración exacta y deja que el navegador interpole solo, sin
+      // overhead de postMessage por frame. Separada a propósito de
+      // notificarAvance: esa SÍ escribe en Firestore (pasoMaximoAlcanzado) y
+      // mezclar el progreso "en vivo, aún no confirmado" con el progreso
+      // persistido rompería el anti-trampa (avanzar sin terminar el audio).
+      notificarSegmentoAudio: function(pctDestino, duracionMs){ parent.postMessage({ tipo:'modulo:segmentoAudio', pctDestino:pctDestino, duracionMs:duracionMs }, '*'); },
       notificarPausado: function(){ parent.postMessage({ tipo:'modulo:pausado' }, '*'); },
       notificarReanudado: function(){ parent.postMessage({ tipo:'modulo:reanudado' }, '*'); },
       notificarFinalizado: function(){ parent.postMessage({ tipo:'modulo:finalizado' }, '*'); },
@@ -139,19 +199,53 @@ function inyectarBootstrap(html, scriptTexto) {
  * @param {string} rutaIndex ruta del index.html dentro del zip (buscarIndexHtml)
  * @returns {Promise<{url:string, urlsTemporales:string[]}>}
  */
+// Inlinea <script src="local.js"> y <link rel="stylesheet" href="local.css">
+// con el contenido real del archivo (ya reescrito por la pasada estática).
+// Debe correr ANTES de sustituirRutasLiterales sobre el HTML: opera sobre
+// las rutas originales ("js/app.js"), no sobre Blob URLs.
+function inlinearScriptsYEstilos(html, contenidoTextoPorRuta) {
+  html = html.replace(/<script\s+([^>]*)>\s*<\/script>/gi, (match, atributos) => {
+    const m = atributos.match(/src\s*=\s*["']([^"']+)["']/i);
+    if (!m) return match; // script inline sin src: no toca nada
+    const limpio = m[1].replace(/^\.?\//, '');
+    if (!contenidoTextoPorRuta.has(limpio)) return match; // externo (http…) u otro: se deja igual
+    return `<script>${contenidoTextoPorRuta.get(limpio)}</script>`;
+  });
+  html = html.replace(/<link\s+([^>]*)>/gi, (match, atributos) => {
+    if (!/rel\s*=\s*["']stylesheet["']/i.test(atributos)) return match;
+    const m = atributos.match(/href\s*=\s*["']([^"']+)["']/i);
+    if (!m) return match;
+    const limpio = m[1].replace(/^\.?\//, '');
+    if (!contenidoTextoPorRuta.has(limpio)) return match;
+    return `<style>${contenidoTextoPorRuta.get(limpio)}</style>`;
+  });
+  return html;
+}
+
 export async function construirDocumentoModulo(zip, rutaIndex) {
   const base = carpetaDe(rutaIndex);
   const rutas = Object.keys(zip.files).filter(p => !zip.files[p].dir && p.startsWith(base));
 
   const urlsTemporales = [];
-  const mapaBlobUrls = new Map(); // ruta relativa a la carpeta del módulo -> blob URL
+  const mapaBlobUrls = new Map(); // ruta relativa a la carpeta del módulo -> data: URI
   const mapaPlano = {};
+  const contenidoTextoPorRuta = new Map(); // solo archivos de texto, ya reescritos
 
+  // Partición de blob: URLs (Chrome, política de aislamiento por partición
+  // de almacenamiento): un iframe sandbox sin allow-same-origin (origen
+  // opaco, aislamiento a propósito — ver drivers.js) ya no puede resolver
+  // un blob: URL creado por el documento padre. Esto rompió img/audio/video
+  // de todos los módulos (nuevos y ya validados) sin que el código de los
+  // módulos ni el driver cambiaran — regresión de plataforma, no de este
+  // proyecto. El documento final del módulo (abajo, iframe.src) sigue en
+  // blob: porque esa es una NAVEGACIÓN de nivel superior del iframe, no un
+  // sub-recurso pedido desde dentro de un documento ya opaco — eso sí sigue
+  // funcionando y no hace falta tocarlo. Los assets referenciados DESDE
+  // DENTRO del documento (img/audio/css/js) sí necesitan data: URI.
   for (const ruta of rutas) {
     const relativa = ruta.slice(base.length);
     const blob = await zip.files[ruta].async('blob');
-    const url = URL.createObjectURL(blob);
-    urlsTemporales.push(url);
+    const url = await blobADataUri(blob, relativa);
     mapaBlobUrls.set(relativa, url);
     mapaPlano[relativa] = url;
   }
@@ -163,15 +257,19 @@ export async function construirDocumentoModulo(zip, rutaIndex) {
     if (!EXT_TEXTO.has(extension(relativa))) continue;
     let texto = await zip.files[ruta].async('text');
     texto = sustituirRutasLiterales(texto, mapaBlobUrls, relativa);
-    const blobTexto = new Blob([texto], { type: relativa.endsWith('.css') ? 'text/css' : relativa.match(/\.m?js$/) ? 'text/javascript' : 'text/plain' });
-    const urlTexto = URL.createObjectURL(blobTexto);
-    urlsTemporales.push(urlTexto);
+    contenidoTextoPorRuta.set(relativa, texto);
+    // También como data: URI, por si algo más lo referencia dinámicamente
+    // (poco común, pero no cuesta nada dejarlo disponible). blob: no sirve
+    // aquí por el mismo motivo de partición explicado arriba.
+    const blobTexto = new Blob([texto]);
+    const urlTexto = await blobADataUri(blobTexto, relativa);
     mapaBlobUrls.set(relativa, urlTexto);
     mapaPlano[relativa] = urlTexto;
   }
 
   const rutaIndexRelativa = rutaIndex.slice(base.length);
   let htmlIndex = await zip.files[rutaIndex].async('text');
+  htmlIndex = inlinearScriptsYEstilos(htmlIndex, contenidoTextoPorRuta);
   htmlIndex = sustituirRutasLiterales(htmlIndex, mapaBlobUrls, rutaIndexRelativa);
   htmlIndex = inyectarBootstrap(htmlIndex, shimRuntime(mapaPlano));
 

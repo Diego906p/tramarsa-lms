@@ -1,331 +1,32 @@
 /* ============================================================
-   TRAMARSA LMS — Drivers de reproducción (patrón Strategy)
-   El núcleo del reproductor (reproductor.js) nunca pregunta "¿qué
-   tipo de módulo es esto?": itera esta lista, en orden, y usa el
-   primer driver cuyo detectar() de positivo. Agregar un formato
-   nuevo el día de mañana = escribir un driver nuevo y agregarlo a
-   la lista — cero cambios en el núcleo ni en los otros drivers.
+   TRAMARSA LMS — Driver de reproducción (patrón Strategy)
+   Un único driver, un único contrato: el LMS localiza index.html y lo
+   ejecuta siempre — nunca inspecciona la estructura interna del
+   paquete (ni nombres de archivo, ni si hay PNG o no). Cualquier
+   módulo que respete el contrato SDK (ver virtual-asset-resolver.js)
+   funciona sin adaptaciones específicas.
 
    Contrato de un driver:
      detectar(zip) -> boolean
-     montar(contenedor, zip, rutaIndex, callbacks) -> destructor()
+     montar(contenedor, zip, rutaIndex, callbacks, urlsTemporales, pasoInicial, navegacionLibre, opciones) -> destructor()
    callbacks = {
      onAvance(pasoActual, totalPasos),  // progreso parcial (Firestore)
      onFinalizado()                     // pasa a evaluación/certificado
    }
+   opciones = { color, moduloId }  // color de acento del módulo (Firestore,
+   ya lo tiene el llamador antes de montar — nunca se le pide al módulo) y
+   su id (clave de la preferencia Automático/Manual persistida en
+   localStorage, por módulo, hasta que el usuario la cambie).
    Toda la lógica académica (evaluación, aprobación, certificado,
    Firestore) vive siempre en reproductor.js — el driver solo informa
    estos dos eventos, nunca toca DB ni sesión.
+
+   La lista de drivers se mantiene como patrón extensible (agregar un
+   formato futuro genuinamente distinto = agregar una clase más acá,
+   cero cambios en el núcleo), aunque hoy solo tenga un integrante.
    ============================================================ */
 
 import { construirDocumentoModulo } from './virtual-asset-resolver.js';
-
-let vimeoSdkPromise = null;
-function cargarVimeoSdk() {
-  if (window.Vimeo && window.Vimeo.Player) return Promise.resolve();
-  if (vimeoSdkPromise) return vimeoSdkPromise;
-  vimeoSdkPromise = new Promise((resolve, reject) => {
-    const s = document.createElement('script');
-    s.src = 'https://player.vimeo.com/api/player.js';
-    s.onload = resolve;
-    s.onerror = reject;
-    document.head.appendChild(s);
-  });
-  return vimeoSdkPromise;
-}
-
-function alternarFullscreenReproductor() {
-  const el = document.getElementById('viewReproductor');
-  if (!document.fullscreenElement) el.requestFullscreen().catch(() => {});
-  else document.exitFullscreen();
-}
-document.addEventListener('fullscreenchange', () => {
-  const btn = document.getElementById('btnLaminaMax') || document.getElementById('btnContenidoMax');
-  if (!btn) return;
-  btn.innerHTML = `<i data-lucide="${document.fullscreenElement ? 'minimize-2' : 'maximize-2'}" size="16"></i>`;
-  lucide.createIcons();
-});
-
-// ---------------------------------------------------------------
-// DriverLaminasLegacy — formato img/DiapositivaNN.png + audio/AudioNN.mp3
-// Migrado sin cambios de comportamiento desde la versión anterior del
-// reproductor (mismo módulo validado en producción: modulo_01).
-// ---------------------------------------------------------------
-export class DriverLaminasLegacy {
-  constructor() {
-    this.laminas = null;
-    this.indiceLamina = 0;
-    this.maximoAlcanzado = 0; // láminas ya "conquistadas": navegar libre hasta acá
-    this.audioLamina = null;
-    this.vimeoPlayerLamina = null;
-    this.dwellRAF = null;
-    this.callbacks = null;
-    this.contenedor = null;
-  }
-
-  static IMG_RE = /(^|\/)img\/Diapositiva(\d+)\.(png|jpe?g|webp)$/i;
-  static AUDIO_RE = /(^|\/)audio\/Audio(\d+)(?:-(\d+))?\.mp3$/i;
-  static MANIFEST_RE = /(^|\/)manifest\.json$/i;
-
-  detectar(zip) {
-    return Object.keys(zip.files).some(p => !zip.files[p].dir && DriverLaminasLegacy.IMG_RE.test(p));
-  }
-
-  async detectarVideoAutomatico(zip, rutas) {
-    const candidatos = rutas.filter(p => /\.(js|html)$/i.test(p));
-    let vimeoId = null;
-    let laminaConVideo = null;
-    for (const ruta of candidatos) {
-      let texto;
-      try { texto = await zip.files[ruta].async('text'); } catch (e) { continue; }
-      if (!vimeoId) {
-        const m = texto.match(/player\.vimeo\.com\/video\/(\d+)/) || texto.match(/vimeo\.com\/(\d+)/);
-        if (m) vimeoId = m[1];
-      }
-      if (laminaConVideo === null) {
-        const m2 = texto.match(/Diapositiva0*(\d+)[^}]{0,120}?video\s*:\s*true/i);
-        if (m2) laminaConVideo = parseInt(m2[1], 10);
-      }
-      if (vimeoId && laminaConVideo !== null) break;
-    }
-    return (vimeoId && laminaConVideo !== null) ? [{ lamina: laminaConVideo, vimeoId }] : [];
-  }
-
-  async construirLaminas(zip, urlsTemporales) {
-    const rutas = Object.keys(zip.files).filter(p => !zip.files[p].dir);
-    const imagenes = new Map();
-    rutas.forEach(p => {
-      const m = p.match(DriverLaminasLegacy.IMG_RE);
-      if (m) imagenes.set(parseInt(m[2], 10), p);
-    });
-    if (imagenes.size === 0) return null;
-
-    const audios = [];
-    rutas.forEach(p => {
-      const m = p.match(DriverLaminasLegacy.AUDIO_RE);
-      if (m) audios.push({ desde: parseInt(m[2], 10), hasta: m[3] ? parseInt(m[3], 10) : null, ruta: p });
-    });
-
-    let videoConfig = [];
-    const manifestPath = rutas.find(p => DriverLaminasLegacy.MANIFEST_RE.test(p));
-    if (manifestPath) {
-      try {
-        const texto = await zip.files[manifestPath].async('text');
-        const manifest = JSON.parse(texto);
-        if (Array.isArray(manifest.video)) videoConfig = manifest.video;
-        else if (manifest.video) videoConfig = [manifest.video];
-      } catch (e) { /* manifest inválido: se ignora */ }
-    }
-    if (videoConfig.length === 0) videoConfig = await this.detectarVideoAutomatico(zip, rutas);
-
-    const numeros = [...imagenes.keys()].sort((a, b) => a - b);
-    const laminas = [];
-    for (const n of numeros) {
-      const blobImg = await zip.files[imagenes.get(n)].async('blob');
-      const urlImg = URL.createObjectURL(blobImg);
-      urlsTemporales.push(urlImg);
-      const video = videoConfig.find(v => v.lamina === n) || null;
-      laminas.push({ numero: n, imgUrl: urlImg, imgUrlDividida: null, audioUrl: null, video });
-    }
-
-    for (const a of audios) {
-      const lamina = laminas.find(l => l.numero === a.desde);
-      if (!lamina) continue;
-      const blobAudio = await zip.files[a.ruta].async('blob');
-      const urlAudio = URL.createObjectURL(blobAudio);
-      urlsTemporales.push(urlAudio);
-      lamina.audioUrl = urlAudio;
-      if (a.hasta) lamina.cubreLaminaNumero = a.hasta;
-    }
-
-    for (const lamina of laminas.slice()) {
-      if (!lamina.cubreLaminaNumero) continue;
-      const cubierta = laminas.find(l => l.numero === lamina.cubreLaminaNumero);
-      if (!cubierta) continue;
-      lamina.imgUrlDividida = cubierta.imgUrl;
-      const idx = laminas.indexOf(cubierta);
-      if (idx >= 0) laminas.splice(idx, 1);
-    }
-    return laminas;
-  }
-
-  async montar(contenedor, zip, rutaIndex, callbacks, urlsTemporales, pasoInicial = 0, navegacionLibre = false) {
-    this.contenedor = contenedor;
-    this.callbacks = callbacks;
-    this.laminas = await this.construirLaminas(zip, urlsTemporales);
-    this.indiceLamina = Math.max(0, Math.min(pasoInicial, this.laminas.length - 1));
-    // Modo revisión (módulo ya completado): todo el contenido cuenta como
-    // ya conquistado, se navega libre sin esperar los audios de nuevo.
-    this.navegacionLibre = navegacionLibre;
-    this.maximoAlcanzado = navegacionLibre ? this.laminas.length - 1 : this.indiceLamina;
-    this.renderPaso();
-    return () => this.destruir();
-  }
-
-  detenerLoopProgreso() {
-    if (this.dwellRAF) cancelAnimationFrame(this.dwellRAF);
-    this.dwellRAF = null;
-  }
-
-  detenerReproduccion() {
-    this.detenerLoopProgreso();
-    if (this.audioLamina) { this.audioLamina.pause(); this.audioLamina.onended = null; }
-    if (this.vimeoPlayerLamina) { this.vimeoPlayerLamina.pause().catch(() => {}); this.vimeoPlayerLamina.off('ended'); this.vimeoPlayerLamina = null; }
-  }
-
-  renderPaso() {
-    this.detenerReproduccion();
-    const total = this.laminas.length;
-    const lamina = this.laminas[this.indiceLamina];
-    document.getElementById('reproductorPaso').textContent = `Diapositiva ${this.indiceLamina + 1} de ${total}`;
-    this.callbacks.onAvance(this.indiceLamina + 1, total + 1);
-
-    this.contenedor.innerHTML = `
-      <div class="rp-full" id="rpLaminaCard">
-        <div class="rp-media-full" id="rpMedia" oncontextmenu="return false;"><img src="${lamina.imgUrl}" alt="Diapositiva ${lamina.numero}" id="rpLaminaImg" oncontextmenu="return false;"></div>
-        <div id="rpControlsBar">
-          <div class="rp-controls">
-            <button class="icon-btn" id="btnLaminaPrev" style="flex:0;min-width:44px;" ${this.indiceLamina === 0 ? 'disabled' : ''}><i data-lucide="chevron-left" size="16"></i></button>
-            <button class="icon-btn" id="btnLaminaPlayPause" style="flex:0;min-width:44px;"><i data-lucide="pause" size="16"></i></button>
-            <div class="rp-dwell-bar"><div class="rp-dwell-fill" id="dwellFillLamina"></div></div>
-            <button class="btn-save" id="btnLaminaNext" disabled style="opacity:.5;white-space:nowrap;">
-              ${this.indiceLamina < total - 1 ? 'Siguiente' : 'Continuar'} <i data-lucide="arrow-right" size="14"></i>
-            </button>
-            <button class="icon-btn" id="btnLaminaMax" style="flex:0;min-width:44px;" title="Pantalla completa"><i data-lucide="${document.fullscreenElement ? 'minimize-2' : 'maximize-2'}" size="16"></i></button>
-          </div>
-          <p style="font-size:.74rem;color:var(--gray-500);margin-top:10px;text-align:center;">Puedes retroceder o pausar, pero no adelantar: "Siguiente" se habilita al terminar el audio de esta diapositiva.</p>
-        </div>
-      </div>
-    `;
-    lucide.createIcons();
-
-    document.getElementById('btnLaminaPrev').addEventListener('click', () => {
-      if (this.indiceLamina > 0) { this.indiceLamina--; this.renderPaso(); }
-    });
-    document.getElementById('btnLaminaNext').addEventListener('click', () => {
-      if (this.indiceLamina < total - 1) { this.indiceLamina++; this.renderPaso(); }
-      else this.callbacks.onFinalizado();
-    });
-    document.getElementById('btnLaminaMax').addEventListener('click', alternarFullscreenReproductor);
-    document.getElementById('btnLaminaPlayPause').addEventListener('click', () => this.togglePlayPause());
-
-    this.iniciarReproduccion(lamina);
-
-    // Ya se llegó antes hasta acá (o más adelante): puede avanzar de
-    // inmediato sin esperar el audio otra vez. El audio igual se
-    // reproduce para quien quiera repasarlo, solo que no bloquea.
-    if (this.navegacionLibre || this.indiceLamina < this.maximoAlcanzado) this.habilitarSiguiente();
-  }
-
-  habilitarSiguiente() {
-    const barra = document.getElementById('rpControlsBar');
-    if (barra) barra.style.display = '';
-    const btn = document.getElementById('btnLaminaNext');
-    if (btn) { btn.disabled = false; btn.style.opacity = '1'; }
-  }
-
-  actualizarIconoPlayPause(reproduciendo) {
-    const btn = document.getElementById('btnLaminaPlayPause');
-    if (!btn) return;
-    btn.innerHTML = `<i data-lucide="${reproduciendo ? 'pause' : 'play'}" size="16"></i>`;
-    lucide.createIcons();
-  }
-
-  iniciarReproduccion(lamina) {
-    const fill = document.getElementById('dwellFillLamina');
-
-    if (!lamina.audioUrl && !lamina.video) {
-      const segundosMinimos = 4;
-      const inicio = performance.now();
-      const tick = () => {
-        const transcurrido = (performance.now() - inicio) / 1000;
-        if (fill) fill.style.width = `${Math.min(100, (transcurrido / segundosMinimos) * 100)}%`;
-        if (transcurrido >= segundosMinimos) {
-          this.maximoAlcanzado = Math.max(this.maximoAlcanzado, this.indiceLamina);
-          this.habilitarSiguiente();
-          return;
-        }
-        this.dwellRAF = requestAnimationFrame(tick);
-      };
-      this.dwellRAF = requestAnimationFrame(tick);
-      return;
-    }
-
-    if (lamina.audioUrl) {
-      if (!this.audioLamina) this.audioLamina = new Audio();
-      const audio = this.audioLamina;
-      audio.src = lamina.audioUrl;
-      audio.currentTime = 0;
-      let dividida = false;
-      const tick = () => {
-        if (fill && audio.duration) fill.style.width = `${(audio.currentTime / audio.duration) * 100}%`;
-        if (lamina.imgUrlDividida && !dividida && audio.duration && audio.currentTime >= audio.duration / 2) {
-          dividida = true;
-          const img = document.getElementById('rpLaminaImg');
-          if (img) img.src = lamina.imgUrlDividida;
-        }
-        this.dwellRAF = requestAnimationFrame(tick);
-      };
-      this.dwellRAF = requestAnimationFrame(tick);
-      audio.onended = () => {
-        this.detenerLoopProgreso();
-        this.maximoAlcanzado = Math.max(this.maximoAlcanzado, this.indiceLamina);
-        if (lamina.video) this.mostrarVideo(lamina);
-        else this.habilitarSiguiente();
-      };
-      const p = audio.play();
-      if (p && p.catch) p.catch(() => {});
-      this.actualizarIconoPlayPause(true);
-    } else if (lamina.video) {
-      this.mostrarVideo(lamina);
-    }
-  }
-
-  async mostrarVideo(lamina) {
-    const media = document.getElementById('rpMedia');
-    if (!media || !lamina.video || !lamina.video.vimeoId) { this.habilitarSiguiente(); return; }
-
-    const barra = document.getElementById('rpControlsBar');
-    if (barra) barra.style.display = 'none';
-
-    media.innerHTML = `<iframe src="https://player.vimeo.com/video/${lamina.video.vimeoId}?badge=0&autopause=0&autoplay=1&muted=1" allow="autoplay; fullscreen; picture-in-picture" title="Video de la diapositiva"></iframe>`;
-    try {
-      await cargarVimeoSdk();
-      this.vimeoPlayerLamina = new window.Vimeo.Player(media.querySelector('iframe'));
-      this.vimeoPlayerLamina.on('ended', () => {
-        this.maximoAlcanzado = Math.max(this.maximoAlcanzado, this.indiceLamina);
-        this.habilitarSiguiente();
-      });
-      this.actualizarIconoPlayPause(true);
-      try {
-        await this.vimeoPlayerLamina.play();
-        await this.vimeoPlayerLamina.setMuted(false);
-      } catch (e) { /* si el navegador bloquea el autoplay, queda muteado y el usuario le da play */ }
-    } catch (e) {
-      if (barra) barra.style.display = '';
-      this.habilitarSiguiente();
-    }
-  }
-
-  togglePlayPause() {
-    const enVideo = this.vimeoPlayerLamina && document.getElementById('rpMedia').querySelector('iframe');
-    if (enVideo) {
-      this.vimeoPlayerLamina.getPaused().then(pausado => {
-        if (pausado) { this.vimeoPlayerLamina.play(); this.actualizarIconoPlayPause(true); }
-        else { this.vimeoPlayerLamina.pause(); this.actualizarIconoPlayPause(false); }
-      }).catch(() => {});
-      return;
-    }
-    if (this.audioLamina && this.audioLamina.src) {
-      if (this.audioLamina.paused) { this.audioLamina.play(); this.actualizarIconoPlayPause(true); }
-      else { this.audioLamina.pause(); this.actualizarIconoPlayPause(false); }
-    }
-  }
-
-  destruir() {
-    this.detenerReproduccion();
-  }
-}
 
 // ---------------------------------------------------------------
 // DriverIndexHtml — contrato universal: el único requisito es que
@@ -364,6 +65,12 @@ export class DriverIndexHtml {
     this.totalDiapositivas = 0;
     this.maximoAlcanzado = 0;
     this.audioListoIndiceActual = false;
+    this.pausado = false;
+    this.pctAvanceReal = 0;
+    this.colorAcento = 'var(--blue-600)';
+    this.moduloId = null;
+    this.clavePreferenciaAutoplay = null;
+    this.autoplayActivo = true;
   }
 
   detectar(zip) {
@@ -371,11 +78,27 @@ export class DriverIndexHtml {
     return Object.keys(zip.files).some(p => !zip.files[p].dir && /(^|\/)index\.html?$/i.test(p));
   }
 
-  async montar(contenedor, zip, rutaIndex, callbacks, urlsTemporalesCompartidas, pasoInicial = 0, navegacionLibre = false) {
+  // Automático/Manual es preferencia del usuario para ESE módulo, no del
+  // módulo en sí — vive en localStorage del navegador, nunca en Firestore
+  // ni en el propio paquete. Persiste hasta que el usuario la cambie.
+  leerPreferenciaAutoplay() {
+    if (!this.clavePreferenciaAutoplay) return true;
+    const guardado = localStorage.getItem(this.clavePreferenciaAutoplay);
+    return guardado === null ? true : guardado === '1';
+  }
+  guardarPreferenciaAutoplay(activo) {
+    if (this.clavePreferenciaAutoplay) localStorage.setItem(this.clavePreferenciaAutoplay, activo ? '1' : '0');
+  }
+
+  async montar(contenedor, zip, rutaIndex, callbacks, urlsTemporalesCompartidas, pasoInicial = 0, navegacionLibre = false, opciones = {}) {
     this.callbacks = callbacks;
     this.pasoInicial = pasoInicial;
     this.navegacionLibre = navegacionLibre;
     this.maximoAlcanzado = pasoInicial;
+    this.colorAcento = opciones.color || 'var(--blue-600)';
+    this.moduloId = opciones.moduloId || null;
+    this.clavePreferenciaAutoplay = this.moduloId ? `tramarsa_autoplay_${this.moduloId}` : null;
+    this.autoplayActivo = this.leerPreferenciaAutoplay();
     const { url, urlsTemporales } = await construirDocumentoModulo(zip, rutaIndex);
     this.urlsTemporales = urlsTemporales;
     urlsTemporalesCompartidas.push(...urlsTemporales);
@@ -408,7 +131,34 @@ export class DriverIndexHtml {
         case 'modulo:iniciado':
           clearTimeout(this.timeoutGracia);
           this.modoControlado = true;
-          this.enviarComando('lms:reanudar', { paso: this.pasoInicial });
+          // Si el aviso de incompatibilidad ya se había mostrado (red lenta,
+          // pestaña en segundo plano throttleada, etc.) y 'modulo:iniciado'
+          // igual llega después, hay que ocultarlo — antes quedaba pegado
+          // en pantalla para siempre aunque el módulo sí se integrara bien
+          // (mensaje falso, no bloqueaba nada pero confundía).
+          { const aviso = document.getElementById('rpAvisoIncompatible'); if (aviso) aviso.style.display = 'none'; }
+          // Orden importa: primero la preferencia (para que el autoavance
+          // interno del módulo ya quede correcto), después el reanudar.
+          // reproducir sigue la preferencia guardada: automático retoma
+          // reproduciendo desde el inicio de esa lámina, manual queda
+          // detenido esperando al usuario. No se intenta recordar el
+          // segundo exacto del audio, solo la lámina.
+          this.enviarComando('lms:alternarAutoplay', { activo: this.autoplayActivo });
+          // navegacionLibre (true en "Volver a ver"): el gate anti-trampa
+          // vive DENTRO del módulo (maxAlcanzado propio) — el driver puede
+          // tener su propio botón "Siguiente" habilitado, pero si el módulo
+          // no sabe que está en revisión libre, su Motor.puedeAvanzar()
+          // sigue bloqueando el avance real. Bug reportado: "Siguiente se
+          // ve habilitado pero no adelanta la lámina".
+          this.enviarComando('lms:reanudar', { paso: this.pasoInicial, reproducir: this.autoplayActivo, navegacionLibre: this.navegacionLibre });
+          // El botón de play/pausa debe reflejar si de verdad quedó sonando
+          // algo tras el reanudar. En el primer montaje (pasoInicial=0) el
+          // propio módulo ya arrancó su lámina 1 con el click de "Iniciar
+          // módulo" del usuario, sin importar la preferencia — sí está
+          // sonando. Al retomar en progreso (pasoInicial>0) el estado real
+          // es exactamente "reproducir": si la preferencia es Manual, no
+          // arranca nada y el botón debe partir en "Reproducir", no "Pausar".
+          this.pausado = this.pasoInicial > 0 && !this.autoplayActivo;
           break;
         case 'modulo:diapositiva':
           if (Number.isFinite(datos.total) && Number.isFinite(datos.indice)) {
@@ -425,7 +175,60 @@ export class DriverIndexHtml {
           this.renderControles();
           break;
         case 'modulo:avance':
-          if (Number.isFinite(datos.pct)) this.callbacks.onAvance(datos.pct, 100);
+          // Evento confirmado (cambio de lámina, Reiniciar, etc.) — SIEMPRE
+          // un salto instantáneo, nunca una animación: transition:none antes
+          // de fijar el ancho, si no el navegador interpolaría un reinicio
+          // (100%→0%) como si fuera parte del progreso normal.
+          if (Number.isFinite(datos.pct)) {
+            this.pctAvanceReal = datos.pct;
+            const fill = document.getElementById('rpProgresoRealFill');
+            if (fill) { fill.style.transition = 'none'; fill.style.width = datos.pct + '%'; }
+            this.callbacks.onAvance(datos.pct, 100);
+            this.renderControles();
+          }
+          break;
+        case 'modulo:segmentoAudio':
+          // Barra realmente fluida: UN mensaje al empezar cada lámina (no
+          // un tick por frame) con {pctDestino, duracionMs} = tiempo real
+          // restante del audio. Se arma una transición CSS de esa duración
+          // exacta y se fija el destino — el navegador interpola solo a
+          // 60fps, sin overhead de postMessage ni de recálculo por JS.
+          // Puramente visual: a propósito no toca Firestore (eso solo pasa
+          // por 'modulo:avance'/'modulo:audioFinalizado', que si confirman
+          // progreso real) — evita romper el anti-trampa con progreso
+          // "en vivo" aún no terminado de escuchar.
+          if (Number.isFinite(datos.pctDestino) && Number.isFinite(datos.duracionMs)) {
+            const fill = document.getElementById('rpProgresoRealFill');
+            if (fill) {
+              // Punto de partida: el ancho REAL actual (getComputedStyle),
+              // no this.pctAvanceReal — ese puede estar desactualizado
+              // (nunca se toca durante una animación en curso ni durante
+              // una pausa), y usarlo como partida causaba un salto/congelo
+              // real al reanudar en medio de una lámina. getComputedStyle
+              // siempre refleja dónde está el fill de verdad, esté animando,
+              // recién congelado por una pausa, o en reposo.
+              const anchoActual = getComputedStyle(fill).width;
+              fill.style.transition = 'none';
+              fill.style.width = anchoActual;
+              void fill.offsetWidth; // fuerza reflow: sin esto el navegador podría fusionar los dos cambios de estilo y saltar directo al destino
+              fill.style.transition = `width ${datos.duracionMs}ms linear`;
+              fill.style.width = datos.pctDestino + '%';
+              this.pctAvanceReal = datos.pctDestino; // mantenido al día por si renderControles() reconstruye la barra después
+            }
+          }
+          break;
+        case 'modulo:pausado':
+          this.pausado = true;
+          // Congela la animación exactamente donde iba (no en el destino
+          // final ni en el valor viejo) — sin rebuild completo del panel,
+          // que recrearía el nodo y perdería la posición actual.
+          { const fill = document.getElementById('rpProgresoRealFill');
+            if (fill) { const anchoActual = getComputedStyle(fill).width; fill.style.transition = 'none'; fill.style.width = anchoActual; } }
+          this.actualizarIconoPlayPausa();
+          break;
+        case 'modulo:reanudado':
+          this.pausado = false;
+          this.actualizarIconoPlayPausa();
           break;
         case 'modulo:finalizado':
           this.callbacks.onFinalizado();
@@ -453,17 +256,36 @@ export class DriverIndexHtml {
     }
   }
 
+  // Solo el ícono/título del botón play-pausa, sin recrear el resto de la
+  // barra — usado por pausado/reanudado para no perder el estado de la
+  // animación CSS de la barra de progreso (un rebuild completo recrea el
+  // nodo del fill y lo reinicia).
+  actualizarIconoPlayPausa() {
+    const btn = document.getElementById('btnIndexHtmlPlayPausa');
+    if (!btn) return;
+    btn.title = this.pausado ? 'Reanudar' : 'Pausar';
+    btn.innerHTML = `<i data-lucide="${this.pausado ? 'play' : 'pause'}" size="16"></i>`;
+    lucide.createIcons();
+  }
+
   renderControles() {
     const barra = document.getElementById('rpControlsBarIndexHtml');
     if (!barra) return;
     const esUltima = this.indiceActual >= this.totalDiapositivas - 1;
     const puedeAvanzar = this.audioListoIndiceActual;
+    const iconoPlayPausa = this.pausado ? 'play' : 'pause';
     barra.innerHTML = `
       <div class="rp-controls">
-        <button class="icon-btn" id="btnIndexHtmlPrev" style="flex:0;min-width:44px;" ${this.indiceActual === 0 ? 'disabled' : ''}><i data-lucide="chevron-left" size="16"></i></button>
-        <div class="rp-dwell-bar"><div class="rp-dwell-fill" style="width:${puedeAvanzar ? 100 : 0}%;"></div></div>
+        <button class="icon-btn" id="btnIndexHtmlPrev" style="flex:0;min-width:44px;" ${this.indiceActual === 0 ? 'disabled' : ''} title="Anterior"><i data-lucide="chevron-left" size="16"></i></button>
+        <button class="icon-btn" id="btnIndexHtmlPlayPausa" style="flex:0;min-width:44px;" title="${this.pausado ? 'Reanudar' : 'Pausar'}"><i data-lucide="${iconoPlayPausa}" size="16"></i></button>
+        <div class="rp-dwell-bar" style="flex:1;height:6px;border-radius:999px;overflow:hidden;background:var(--gray-200);">
+          <div id="rpProgresoRealFill" style="height:100%;width:${this.pctAvanceReal}%;background:${this.colorAcento};transition:width .12s linear;"></div>
+        </div>
         <button class="btn-save" id="btnIndexHtmlNext" ${puedeAvanzar ? '' : 'disabled'} style="${puedeAvanzar ? '' : 'opacity:.5;'}white-space:nowrap;">
           ${esUltima ? 'Continuar' : 'Siguiente'} <i data-lucide="arrow-right" size="14"></i>
+        </button>
+        <button class="icon-btn" id="btnIndexHtmlAuto" style="flex:0;min-width:44px;${this.autoplayActivo ? 'color:' + this.colorAcento + ';' : ''}" title="${this.autoplayActivo ? 'Automático (clic para Manual)' : 'Manual (clic para Automático)'}">
+          <i data-lucide="${this.autoplayActivo ? 'zap' : 'hand'}" size="16"></i>
         </button>
       </div>
       <p style="font-size:.74rem;color:var(--gray-500);margin-top:10px;text-align:center;">Puedes retroceder o pausar, pero no adelantar: "Siguiente" se habilita al terminar el audio de esta diapositiva.</p>
@@ -474,11 +296,35 @@ export class DriverIndexHtml {
       if (esUltima) this.callbacks.onFinalizado();
       else this.enviarComando('lms:siguiente', {});
     });
+    document.getElementById('btnIndexHtmlPlayPausa').addEventListener('click', () => {
+      if (this.pausado) this.enviarComando('lms:continuar', {});
+      else this.enviarComando('lms:pausar', {});
+    });
+    document.getElementById('btnIndexHtmlAuto').addEventListener('click', () => {
+      this.autoplayActivo = !this.autoplayActivo;
+      this.guardarPreferenciaAutoplay(this.autoplayActivo);
+      this.enviarComando('lms:alternarAutoplay', { activo: this.autoplayActivo });
+      this.renderControles();
+    });
   }
 
   destruir() {
     clearTimeout(this.timeoutGracia);
     if (this.handlerMensaje) window.removeEventListener('message', this.handlerMensaje);
+    // Bug real: ocultar #viewReproductor con CSS (display:none) NO detiene
+    // el iframe — sigue vivo, el audio sigue sonando y el Motor del módulo
+    // sigue autoavanzando en segundo plano aunque nadie lo vea, corrompiendo
+    // el progreso guardado la próxima vez que llegue un modulo:diapositiva/
+    // avance real. Sacar el iframe del DOM es la única forma garantizada de
+    // detener de verdad todo lo que corre adentro (audio, timers, el propio
+    // Motor) — por spec, un iframe removido termina su browsing context al
+    // instante. src='about:blank' primero por si algún navegador demora el
+    // remove() un tick.
+    if (this.iframe) {
+      this.iframe.src = 'about:blank';
+      this.iframe.remove();
+      this.iframe = null;
+    }
   }
 }
 
@@ -488,6 +334,6 @@ export class DriverIndexHtml {
  * @param {JSZip} zip
  */
 export function seleccionarDriver(zip) {
-  const drivers = [new DriverLaminasLegacy(), new DriverIndexHtml()];
+  const drivers = [new DriverIndexHtml()];
   return drivers.find(d => d.detectar(zip)) || null;
 }

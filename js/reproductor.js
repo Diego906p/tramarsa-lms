@@ -20,6 +20,7 @@ const RP = {
   driver: null,           // instancia del driver ganador (ver modulo-loader/drivers.js)
   destructorDriver: null,
   modoRevision: false,    // módulo ya COMPLETADO: "Volver a ver" no re-evalúa ni reescribe el historial
+  progresoFinalizado: false, // true en la pantalla de certificado/resultado aprobado: el progreso YA está guardado, salir no debe preguntar nada
   preguntas: [],
   indicePregunta: 0,
   respuestasCorrectas: 0,
@@ -160,7 +161,7 @@ async function montarDriverDelModulo() {
   RP.destructorDriver = await driver.montar(contenedor, RP.zip, rutaIndex, {
     onAvance: (paso, total) => guardarAvanceHistorial(paso, total),
     onFinalizado: () => prepararEvaluacionOFinalizar()
-  }, RP.urlsTemporales, pasoInicial, RP.modoRevision);
+  }, RP.urlsTemporales, pasoInicial, RP.modoRevision, { color: RP.modulo.color, moduloId: RP.moduloId });
 }
 
 function mostrarCargandoReproductor() {
@@ -203,14 +204,14 @@ async function leerJsonDelZip(ruta) {
 // Evaluación: banco de preguntas aleatorio, secuencial, sin retroceder
 // ---------------------------------------------------------------
 async function prepararEvaluacionOFinalizar() {
-  // Modo "Volver a ver": el módulo ya está aprobado — al terminar el
-  // contenido no se vuelve a generar el cuestionario ni un certificado
-  // nuevo, solo se re-muestra el resultado ya registrado (misma fecha
-  // de emisión, mismo puntaje, mismo certificado).
+  // Modo "Volver a ver": el módulo ya está aprobado — es solo repaso de
+  // contenido, no una evaluación real. Al llegar al final no se vuelve a
+  // generar el cuestionario ni se re-muestra la pantalla de resultado o
+  // certificado (ya se vieron/descargaron desde Certificados si hacía
+  // falta) — pero cerrar de inmediato sin aviso se sentía abrupto, así
+  // que se muestra una pantalla corta de agradecimiento antes de volver.
   if (RP.modoRevision) {
-    const usuario = getSesion();
-    const hist = await DB.obtenerHistorialRegistro(usuario.dni, RP.moduloId);
-    await renderResultadoAprobado(hist ? hist.puntaje : null);
+    renderAgradecimientoRevision();
     return;
   }
 
@@ -232,6 +233,21 @@ async function prepararEvaluacionOFinalizar() {
   RP.respuestasCorrectas = 0;
 
   renderPasoPregunta();
+}
+
+// Pantalla corta al llegar al final de una sesión "Volver a ver" — no hay
+// evaluación ni certificado que mostrar de nuevo, pero cerrar en seco se
+// sentía abrupto para el usuario.
+function renderAgradecimientoRevision() {
+  document.getElementById('reproductorPaso').textContent = '';
+  document.getElementById('reproductorBody').innerHTML = `
+    <div class="rp-card rp-resultado" style="text-align:center;">
+      <i data-lucide="check-circle-2" size="40" style="color:var(--green-500);margin-bottom:10px;"></i>
+      <h2 style="font-size:1.2rem;font-weight:800;color:var(--navy-900);margin-bottom:6px;">Gracias por volver a ver el módulo.</h2>
+      <button class="btn-save" style="margin-top:10px;" onclick="cerrarReproductor()">Salir</button>
+    </div>
+  `;
+  lucide.createIcons();
 }
 
 function mezclarArray(arr) {
@@ -327,6 +343,10 @@ async function finalizarModulo(puntaje) {
 
 async function renderResultadoAprobado(puntaje) {
   document.getElementById('reproductorPaso').textContent = '';
+  // A partir de acá el progreso YA está guardado en Firestore (COMPLETADO):
+  // salir con la X de arriba no debe preguntar "¿tu avance no se guardará?"
+  // — eso ya no aplica, es mentira en esta pantalla.
+  RP.progresoFinalizado = true;
   const usuario = getSesion();
 
   // Presentación tipo diploma: solo el mensaje arriba, el certificado
@@ -585,6 +605,7 @@ async function verCertificadoStandalone(moduloId, alVolver) {
   RP.zip = null;
   RP.urlsTemporales = RP.urlsTemporales || [];
   RP.alSalir = alVolver || null;
+  RP.progresoFinalizado = true; // ver un certificado ya emitido: nada que perder al salir
 
   document.getElementById('viewReproductor').classList.remove('hidden');
   document.getElementById('reproductorTitulo').textContent = modulo.nombre;
@@ -609,14 +630,20 @@ function cerrarReproductor() {
   RP.driver = null;
   RP.urlsTemporales.forEach(u => URL.revokeObjectURL(u));
   RP.urlsTemporales = [];
-  RP.zip = null; RP.preguntas = []; RP.modoRevision = false;
+  RP.zip = null; RP.preguntas = []; RP.modoRevision = false; RP.progresoFinalizado = false;
   document.getElementById('viewReproductor').classList.add('hidden');
   (RP.alSalir || renderDashboardTrabajador)();
   RP.alSalir = null;
   lucide.createIcons();
 }
 document.getElementById('btnSalirReproductor').addEventListener('click', () => {
-  if (confirm('¿Salir del módulo? Tu avance en la evaluación actual no se guardará.')) cerrarReproductor();
+  // Sin alerta: en "Volver a ver" no hay nada que perder (solo repaso), y
+  // en la pantalla de certificado/resultado el progreso ya quedó guardado
+  // — la advertencia de "no se guardará" sería directamente falsa ahí.
+  // Solo se pregunta si hay una evaluación real en curso todavía sin cerrar.
+  if (RP.modoRevision || RP.progresoFinalizado || confirm('¿Salir del módulo? Tu avance en la evaluación actual no se guardará.')) {
+    cerrarReproductor();
+  }
 });
 
 Object.assign(window, {

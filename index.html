@@ -130,7 +130,12 @@ button { font-family:inherit; cursor:pointer; }
 /* Anillo de progreso general (Inicio / Mi progreso) */
 .progreso-ring { --pct:0; width:88px; height:88px; border-radius:50%; flex-shrink:0; display:flex; align-items:center; justify-content:center; background:conic-gradient(var(--blue-600) calc(var(--pct)*1%), var(--gray-200) 0); }
 .progreso-ring::before { content:""; position:absolute; }
-.progreso-ring span { width:70px; height:70px; border-radius:50%; background:white; display:flex; align-items:center; justify-content:center; font-size:1rem; font-weight:800; color:var(--navy-900); }
+/* Círculo interior proporcional (no tamaño fijo): así se ve idéntico
+   (mismo grosor de anillo) en su tamaño por defecto (Mis módulos) y en
+   cualquier instancia achicada por estilo inline (Inicio) — antes el
+   interior fijo en 70px casi tapaba el anillo cuando el exterior se
+   achicaba a 74px. */
+.progreso-ring span { width:calc(100% - 18px); height:calc(100% - 18px); border-radius:50%; background:white; display:flex; align-items:center; justify-content:center; font-size:1em; font-weight:800; color:var(--navy-900); }
 
 /* Barra de avance mini dentro de una fila de módulo */
 .barra-progreso-mini { height:5px; background:var(--gray-200); border-radius:99px; overflow:hidden; margin-top:6px; max-width:220px; }
@@ -170,7 +175,7 @@ button { font-family:inherit; cursor:pointer; }
    junto al nombre en todas las vistas (misma idea que los stat-icon). */
 .mod-chip { border-radius:10px; display:flex; align-items:center; justify-content:center; color:#fff; flex-shrink:0; width:36px; height:36px; }
 /* Galería visual de íconos (modal módulo): tarjetas clicables, sin dropdown de texto */
-.icon-gallery { display:grid; grid-template-columns:repeat(auto-fill,minmax(52px,1fr)); gap:8px; margin-top:4px; }
+.icon-gallery { display:grid; grid-template-columns:repeat(auto-fill,minmax(52px,1fr)); gap:8px; margin-top:4px; max-height:128px; overflow-y:auto; padding-right:2px; }
 .icon-gallery-item { aspect-ratio:1; border:2px solid var(--gray-200); border-radius:10px; display:flex; align-items:center; justify-content:center; cursor:pointer; color:var(--gray-500); transition:border-color var(--transition), background var(--transition), color var(--transition); }
 .icon-gallery-item:hover { border-color:var(--blue-600); }
 .icon-gallery-item.active { border-color:var(--blue-600); background:var(--blue-100); color:var(--blue-600); }
@@ -205,11 +210,20 @@ button { font-family:inherit; cursor:pointer; }
 .form-group input[type=text], .form-group input[type=password], .form-group textarea, .form-group select { width:100%; border:1px solid var(--gray-200); border-radius:10px; padding:10px 13px; font-family:'Inter',sans-serif; font-size:.88rem; }
 .form-group textarea { resize:vertical; min-height:64px; }
 .form-row { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
-.file-drop { border:2px dashed var(--gray-300); border-radius:12px; padding:20px; text-align:center; cursor:pointer; transition:border-color var(--transition), background var(--transition); }
+.file-drop { position:relative; border:2px dashed var(--gray-300); border-radius:12px; padding:20px; text-align:center; cursor:pointer; transition:border-color var(--transition), background var(--transition); }
 .file-drop:hover { border-color:var(--blue-600); background:var(--blue-100); }
 .file-drop svg { color:var(--gray-400); margin-bottom:7px; }
-.file-drop p { font-size:.82rem; color:var(--gray-500); }
-.file-drop .file-name { font-weight:700; color:var(--blue-600); margin-top:5px; font-size:.82rem; }
+.file-drop p { font-size:.82rem; color:var(--gray-500); margin-bottom:2px; }
+.file-drop .file-drop-hint { display:block; font-size:.7rem; color:var(--gray-400); }
+/* Grid 2x2 del formulario de módulo: Miniatura+Módulo arriba, Preguntas+Certificado abajo */
+.form-grid-2x2 { display:grid; grid-template-columns:1fr 1fr; gap:14px; }
+.form-grid-2x2 .form-group { margin:0; }
+/* Indicador de estado (✅/❌) + papelera: esquina superior derecha del
+   cuadrante, sin alterar tamaño/contenido del recuadro. */
+.file-drop-estado { position:absolute; top:6px; right:8px; display:flex; align-items:center; gap:5px; z-index:1; }
+.file-drop-badge { font-size:.8rem; line-height:1; }
+.btn-eliminar-archivo { background:none; border:none; padding:0; width:16px; height:16px; color:var(--gray-400); display:flex; align-items:center; justify-content:center; cursor:pointer; }
+.btn-eliminar-archivo:hover { color:#DC2626; }
 .modal-actions { display:flex; justify-content:flex-end; gap:10px; margin-top:18px; }
 .btn-cancel { padding:10px 16px; border-radius:10px; border:1px solid var(--gray-200); background:white; font-weight:600; font-size:.85rem; }
 .btn-save { display:inline-flex; align-items:center; justify-content:center; gap:6px; padding:10px 18px; border-radius:10px; border:none; background:var(--blue-600); color:white; font-weight:700; font-size:.85rem; }
@@ -395,6 +409,19 @@ tr:last-child td { border-bottom:none; }
   </section>
 </div>
 
+<!-- Modal: aviso de cierre de sesión por inactividad (30s antes) -->
+<div class="modal-overlay" id="modalInactividadOverlay">
+  <div class="modal" style="max-width:380px;text-align:center;">
+    <i data-lucide="clock" size="32" style="color:var(--orange-500);margin-bottom:10px;"></i>
+    <h2 style="margin-bottom:8px;">Tu sesión está por expirar</h2>
+    <p style="font-size:.85rem;color:var(--gray-500);margin-bottom:18px;">Por inactividad, se cerrará automáticamente en <strong id="segundosRestantesInactividad">30</strong> segundos.</p>
+    <div class="modal-actions" style="justify-content:center;">
+      <button type="button" class="btn-cancel" id="btnCerrarSesionInactividad">Cerrar sesión</button>
+      <button type="button" class="btn-save" id="btnContinuarTrabajando">Continuar trabajando</button>
+    </div>
+  </div>
+</div>
+
 <!-- Modal: crear administrador inicial (solo aparece si no existe ninguno) -->
 <div class="modal-overlay" id="modalCrearAdminOverlay">
   <div class="modal">
@@ -486,41 +513,58 @@ tr:last-child td { border-bottom:none; }
         <label>Color</label>
         <input type="color" id="fColor" value="#2563eb" style="height:42px;padding:4px;width:100%;">
       </div>
-      <div class="form-group">
-        <label>Miniatura del módulo (imagen 16:9, opcional)</label>
-        <div class="file-drop" id="fileDropMiniatura">
-          <input type="file" id="fMiniatura" accept="image/*" style="display:none;">
-          <i data-lucide="image" size="22"></i>
-          <p>Haz clic o arrastra aquí la imagen de portada</p>
-          <div class="file-name" id="nombreMiniatura"></div>
-          <img id="previewMiniatura" style="display:none;max-width:100%;aspect-ratio:16/9;object-fit:cover;border-radius:8px;margin-top:8px;">
+      <div class="form-grid-2x2">
+        <div class="form-group">
+          <label>Miniatura</label>
+          <div class="file-drop" id="fileDropMiniatura">
+            <div class="file-drop-estado" id="estadoMiniatura" style="display:none;">
+              <span class="file-drop-badge" id="badgeMiniatura"></span>
+              <button type="button" class="btn-eliminar-archivo" id="btnEliminarMiniatura" title="Eliminar"><i data-lucide="trash-2" size="13"></i></button>
+            </div>
+            <input type="file" id="fMiniatura" accept="image/*" style="display:none;">
+            <i data-lucide="image" size="22"></i>
+            <p>Haz clic o arrastra aquí...</p>
+            <span class="file-drop-hint">JPG, PNG o WEBP (16:9)</span>
+            <img id="previewMiniatura" style="display:none;">
+          </div>
         </div>
-      </div>
-      <div class="form-group">
-        <label>Archivo del módulo (.zip, .rar o una carpeta completa)</label>
-        <div class="file-drop" id="fileDrop">
-          <input type="file" id="fArchivo" accept=".zip,.rar" style="display:none;">
-          <i data-lucide="upload-cloud" size="26"></i>
-          <p>Haz clic o arrastra aquí el archivo .zip / .rar / carpeta</p>
-          <div class="file-name" id="nombreArchivo"></div>
+        <div class="form-group">
+          <label>Módulo</label>
+          <div class="file-drop" id="fileDrop">
+            <div class="file-drop-estado" id="estadoArchivo" style="display:none;">
+              <span class="file-drop-badge" id="badgeArchivo"></span>
+            </div>
+            <input type="file" id="fArchivo" accept=".zip,.rar" style="display:none;">
+            <i data-lucide="upload-cloud" size="26"></i>
+            <p>Haz clic o arrastra aquí...</p>
+            <span class="file-drop-hint">ZIP, RAR o carpeta completa</span>
+          </div>
         </div>
-      </div>
-      <div class="form-group">
-        <label>Preguntas de la evaluación (.txt, .docx o .json)</label>
-        <div class="file-drop" id="fileDropPreguntas">
-          <input type="file" id="fPreguntas" accept=".txt,.docx,.json" style="display:none;">
-          <i data-lucide="list-checks" size="22"></i>
-          <p>Haz clic o arrastra aquí el archivo de preguntas</p>
-          <div class="file-name" id="nombrePreguntas"></div>
+        <div class="form-group">
+          <label>Preguntas</label>
+          <div class="file-drop" id="fileDropPreguntas">
+            <div class="file-drop-estado" id="estadoPreguntas" style="display:none;">
+              <span class="file-drop-badge" id="badgePreguntas"></span>
+              <button type="button" class="btn-eliminar-archivo" id="btnEliminarPreguntas" title="Eliminar"><i data-lucide="trash-2" size="13"></i></button>
+            </div>
+            <input type="file" id="fPreguntas" accept=".txt,.docx,.json" style="display:none;">
+            <i data-lucide="list-checks" size="22"></i>
+            <p>Haz clic o arrastra aquí...</p>
+            <span class="file-drop-hint">TXT, DOCX o JSON</span>
+          </div>
         </div>
-      </div>
-      <div class="form-group">
-        <label>Plantilla de certificado (PDF editable)</label>
-        <div class="file-drop" id="fileDropCertificado">
-          <input type="file" id="fCertificado" accept=".pdf" style="display:none;">
-          <i data-lucide="award" size="22"></i>
-          <p>Haz clic o arrastra aquí el PDF de la plantilla</p>
-          <div class="file-name" id="nombreCertificado"></div>
+        <div class="form-group">
+          <label>Certificado</label>
+          <div class="file-drop" id="fileDropCertificado">
+            <div class="file-drop-estado" id="estadoCertificado" style="display:none;">
+              <span class="file-drop-badge" id="badgeCertificado"></span>
+              <button type="button" class="btn-eliminar-archivo" id="btnEliminarCertificado" title="Eliminar"><i data-lucide="trash-2" size="13"></i></button>
+            </div>
+            <input type="file" id="fCertificado" accept=".pdf" style="display:none;">
+            <i data-lucide="award" size="22"></i>
+            <p>Haz clic o arrastra aquí...</p>
+            <span class="file-drop-hint">PDF editable</span>
+          </div>
         </div>
       </div>
       <div class="modal-actions">
@@ -610,7 +654,6 @@ tr:last-child td { border-bottom:none; }
     <div class="form-error" id="formErrorGrupo"></div>
     <div class="modal-actions">
       <button type="button" class="btn-cancel" id="btnCancelarGrupo">Cancelar</button>
-      <button type="button" class="btn-outline" id="btnAsignarATodos">Asignar a todos</button>
       <button type="button" class="btn-save" id="btnHabilitarGrupo">Asignar</button>
     </div>
   </div>

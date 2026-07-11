@@ -169,6 +169,69 @@ async function cerrarSesion() {
 }
 
 // ---------------------------------------------------------------
+// Cierre automático de sesión por inactividad (5 min). Solo cuentan como
+// actividad los clics/toques del mouse y las pulsaciones de teclado —
+// mousemove/scroll NO reinician el contador (no garantizan que el usuario
+// siga usando la plataforma de verdad, a diferencia de un clic o una
+// tecla). Aviso 30s antes del cierre, con opción de seguir trabajando.
+// ---------------------------------------------------------------
+const TIEMPO_INACTIVIDAD_MS = 5 * 60 * 1000;
+const TIEMPO_AVISO_ANTES_MS = 30 * 1000;
+let timeoutAvisoInactividad = null;
+let timeoutCierreInactividad = null;
+let intervalCuentaRegresivaInactividad = null;
+let controlInactividadActivo = false;
+
+function limpiarTemporizadoresInactividad() {
+  clearTimeout(timeoutAvisoInactividad);
+  clearTimeout(timeoutCierreInactividad);
+  clearInterval(intervalCuentaRegresivaInactividad);
+}
+
+function mostrarAvisoInactividad() {
+  let restantes = TIEMPO_AVISO_ANTES_MS / 1000;
+  const span = document.getElementById('segundosRestantesInactividad');
+  if (span) span.textContent = restantes;
+  document.getElementById('modalInactividadOverlay').classList.add('show');
+  intervalCuentaRegresivaInactividad = setInterval(() => {
+    restantes--;
+    if (span) span.textContent = Math.max(0, restantes);
+    if (restantes <= 0) clearInterval(intervalCuentaRegresivaInactividad);
+  }, 1000);
+}
+
+// Se llama tanto al detectar actividad real (clic/tecla) como al abrir
+// sesión — reinicia el reloj desde cero y oculta el aviso si estaba abierto
+// (cualquier clic, incluido el de "Continuar trabajando", cuenta como
+// actividad real).
+function reiniciarTemporizadorInactividad() {
+  if (!controlInactividadActivo) return;
+  limpiarTemporizadoresInactividad();
+  document.getElementById('modalInactividadOverlay').classList.remove('show');
+  timeoutAvisoInactividad = setTimeout(mostrarAvisoInactividad, TIEMPO_INACTIVIDAD_MS - TIEMPO_AVISO_ANTES_MS);
+  timeoutCierreInactividad = setTimeout(async () => {
+    document.getElementById('modalInactividadOverlay').classList.remove('show');
+    await cerrarSesion();
+  }, TIEMPO_INACTIVIDAD_MS);
+}
+
+function iniciarControlInactividad() {
+  if (controlInactividadActivo) return; // ya activo (ej. re-entrada por login sin recargar)
+  controlInactividadActivo = true;
+  document.addEventListener('click', reiniciarTemporizadorInactividad);
+  document.addEventListener('keydown', reiniciarTemporizadorInactividad);
+  reiniciarTemporizadorInactividad();
+}
+
+document.getElementById('btnContinuarTrabajando').addEventListener('click', () => {
+  reiniciarTemporizadorInactividad();
+});
+document.getElementById('btnCerrarSesionInactividad').addEventListener('click', async () => {
+  limpiarTemporizadoresInactividad();
+  await cerrarSesion();
+});
+
+// ---------------------------------------------------------------
 // Restauración de estado tras refrescar (cualquier método: F5, Ctrl+F5,
 // botón recargar, Enter en la barra...). Cada render de sección guarda
 // su nombre; al arrancar con sesión válida se vuelve a esa misma sección
@@ -246,6 +309,7 @@ async function iniciarApp() {
 
   document.getElementById('viewLogin').classList.add('hidden');
   document.getElementById('viewApp').classList.remove('hidden');
+  iniciarControlInactividad();
 
   document.getElementById('nombreUsuario').textContent = nombreCompleto(usuario);
   document.getElementById('correoUsuario').textContent = usuario.correo;
@@ -421,8 +485,8 @@ const COLOR_POR_ESTADO = {
 // crearlo): se reutiliza igual en TODAS las vistas donde aparezca un
 // módulo — admin y trabajador, actuales y futuras.
 // ---------------------------------------------------------------
-export function chipModulo(m, size = 36, iconSize = 17) {
-  return `<div class="mod-chip" style="width:${size}px;height:${size}px;background:${m.color || 'var(--blue-600)'};"><i data-lucide="${m.icono || 'book-open'}" size="${iconSize}"></i></div>`;
+export function chipModulo(m, size = 36, iconSize = 17, strokeWidth = null) {
+  return `<div class="mod-chip" style="width:${size}px;height:${size}px;background:${m.color || 'var(--blue-600)'};"><i data-lucide="${m.icono || 'book-open'}" size="${iconSize}"${strokeWidth ? ` stroke-width="${strokeWidth}"` : ''}></i></div>`;
 }
 export function coverModulo(m, iconSize = 26) {
   if (m.miniaturaUrl) return `<div class="modulo-cover" style="background-image:url('${m.miniaturaUrl}');"></div>`;
@@ -475,7 +539,9 @@ function tarjetaModuloTrabajador(item, vista) {
     cuerpoExtra = `
       <div class="modulo-meta"><i data-lucide="target" size="13"></i> Puntaje: ${item.hist && item.hist.puntaje != null ? item.hist.puntaje + '%' : 'Sin evaluación'}</div>
       <div class="modulo-meta"><i data-lucide="calendar" size="13"></i> Emitido: ${item.hist && item.hist.fechaFin ? new Date(item.hist.fechaFin).toLocaleDateString('es-PE') : '-'}</div>`;
-    acciones = `<button class="btn-save" style="width:100%;justify-content:center;display:flex;align-items:center;gap:7px;" onclick="verCertificadoStandalone('${m.id}', renderCertificadosTrabajador)"><i data-lucide="download" size="14"></i> Descargar certificado</button>`;
+    acciones = m.certificadoUrl
+      ? `<button class="btn-save" style="width:100%;justify-content:center;display:flex;align-items:center;gap:7px;" onclick="verCertificadoStandalone('${m.id}', renderCertificadosTrabajador)"><i data-lucide="download" size="14"></i> Descargar certificado</button>`
+      : `<button class="btn-save" disabled style="width:100%;justify-content:center;display:flex;align-items:center;gap:7px;background:var(--gray-200);color:var(--gray-500);cursor:default;">Sin certificado</button>`;
   } else {
     cuerpoExtra = `
       <div style="display:flex;align-items:center;gap:10px;margin-top:4px;">
@@ -484,9 +550,8 @@ function tarjetaModuloTrabajador(item, vista) {
       </div>`;
     if (vista === 'modulos') {
       if (item.estado === 'COMPLETADO') {
-        acciones = `
-          <button class="icon-btn" onclick="abrirReproductor('${m.id}')"><i data-lucide="rotate-ccw" size="13"></i> Volver a ver</button>
-          <button class="icon-btn primary-outline" onclick="verCertificadoStandalone('${m.id}', renderMisModulosTrabajador)"><i data-lucide="award" size="13"></i> Certificado</button>`;
+        acciones = `<button class="icon-btn" onclick="abrirReproductor('${m.id}')"><i data-lucide="rotate-ccw" size="13"></i> Volver a ver</button>`
+          + (m.certificadoUrl ? `<button class="icon-btn primary-outline" onclick="verCertificadoStandalone('${m.id}', renderMisModulosTrabajador)"><i data-lucide="award" size="13"></i> Certificado</button>` : '');
       } else if (m.archivoUrl) {
         acciones = `<button class="btn-save" style="width:100%;justify-content:center;" onclick="abrirReproductor('${m.id}')">${item.estado === 'EN_PROGRESO' ? 'Continuar' : 'Iniciar'}</button>`;
       } else {
@@ -516,6 +581,33 @@ function tarjetaModuloTrabajador(item, vista) {
 // Inicio: dashboard de novedades (no repite Mis módulos) — avisos de
 // módulos recién asignados, el módulo en curso más avanzado para
 // retomarlo directo, y los últimos certificados obtenidos.
+const FILAS_INICIO_POR_PAGINA = 3;
+let paginaContinuarInicio = 1;
+let paginaPendientesInicio = 1;
+let paginaLogrosInicio = 1;
+
+// Paginación numerada (1, 2, 3, … Anterior/Siguiente) — usada por las 3
+// listas de Inicio, cada una con su propio estado de página independiente.
+// Paginación integrada al encabezado de la tarjeta (esquina superior
+// derecha, junto al título): "## de ##" + flechas. Siempre visible, incluso
+// con una sola página — las flechas quedan deshabilitadas en vez de
+// desaparecer. Reemplaza los botones inferiores Anterior/Siguiente +
+// numeración centrada que se usaban antes.
+function htmlPaginacionHeader(pagina, totalPaginas, fnCambiar) {
+  return `
+    <div style="display:flex;align-items:center;gap:6px;font-size:.78rem;color:var(--gray-500);flex-shrink:0;">
+      <span>${pagina} de ${totalPaginas}</span>
+      <button class="icon-btn" style="flex:0;min-width:26px;width:26px;height:26px;padding:0;" ${pagina <= 1 ? 'disabled' : ''} onclick="${fnCambiar}(${pagina - 1})"><i data-lucide="chevron-left" size="14"></i></button>
+      <button class="icon-btn" style="flex:0;min-width:26px;width:26px;height:26px;padding:0;" ${pagina >= totalPaginas ? 'disabled' : ''} onclick="${fnCambiar}(${pagina + 1})"><i data-lucide="chevron-right" size="14"></i></button>
+    </div>`;
+}
+function paginar(lista, pagina) {
+  const totalPaginas = Math.max(1, Math.ceil(lista.length / FILAS_INICIO_POR_PAGINA));
+  const paginaClamp = Math.min(pagina, totalPaginas);
+  const inicio = (paginaClamp - 1) * FILAS_INICIO_POR_PAGINA;
+  return { pagina: paginaClamp, totalPaginas, items: lista.slice(inicio, inicio + FILAS_INICIO_POR_PAGINA) };
+}
+
 export async function renderDashboardTrabajador() {
   renderSidebarTrabajador('inicio');
   document.getElementById('pageTitle').textContent = 'Inicio';
@@ -523,10 +615,22 @@ export async function renderDashboardTrabajador() {
   const { usuario, items, completados, enProgreso, pendientes } = await datosCapacitacionesTrabajador();
   const total = items.length;
   const pctGeneral = total ? Math.round((completados.length / total) * 100) : 0;
-  const continuarItem = enProgreso.slice().sort((a, b) => b.avance - a.avance)[0] || null;
-  const logros = completados.slice()
-    .sort((a, b) => new Date(b.hist.fechaFin) - new Date(a.hist.fechaFin))
-    .slice(0, 3);
+
+  // "Última actividad": el modelo de historial solo guarda fechaInicio
+  // (fija desde el primer intento) y fechaFin — no hay un timestamp de
+  // "última vez tocado". fechaInicio es la mejor aproximación disponible
+  // sin agregar un campo nuevo al esquema de Firestore.
+  const continuarLista = enProgreso.slice()
+    .sort((a, b) => new Date((b.hist && b.hist.fechaInicio) || 0) - new Date((a.hist && a.hist.fechaInicio) || 0));
+  const logrosLista = completados.slice()
+    .sort((a, b) => new Date(b.hist.fechaFin) - new Date(a.hist.fechaFin));
+
+  const pagContinuar = paginar(continuarLista, paginaContinuarInicio);
+  const pagPendientes = paginar(pendientes, paginaPendientesInicio);
+  const pagLogros = paginar(logrosLista, paginaLogrosInicio);
+  paginaContinuarInicio = pagContinuar.pagina;
+  paginaPendientesInicio = pagPendientes.pagina;
+  paginaLogrosInicio = pagLogros.pagina;
 
   document.getElementById('content').innerHTML = `
     <div class="welcome-row" style="display:flex;align-items:center;justify-content:space-between;gap:20px;flex-wrap:wrap;">
@@ -537,21 +641,21 @@ export async function renderDashboardTrabajador() {
       ${total ? `<div class="progreso-ring" style="--pct:${pctGeneral};width:74px;height:74px;font-size:.9rem;"><span>${pctGeneral}%</span></div>` : ''}
     </div>
 
-    ${continuarItem ? `
+    ${continuarLista.length ? `
     <div class="panel" style="margin-top:16px;">
-      <div class="panel-head"><h2>Continúa donde quedaste</h2></div>
-      ${filaModuloTrabajador(continuarItem, false)}
+      <div class="panel-head"><h2>Continúa donde quedaste</h2>${htmlPaginacionHeader(pagContinuar.pagina, pagContinuar.totalPaginas, 'cambiarPaginaContinuarInicio')}</div>
+      <div id="listaContinuarInicio"></div>
     </div>` : ''}
 
     ${pendientes.length ? `
     <div class="panel" style="margin-top:16px;">
-      <div class="panel-head"><h2>Nuevos módulos asignados</h2></div>
+      <div class="panel-head"><h2>Nuevos módulos asignados</h2>${htmlPaginacionHeader(pagPendientes.pagina, pagPendientes.totalPaginas, 'cambiarPaginaPendientesInicio')}</div>
       <div id="listaAvisosPendientes"></div>
     </div>` : ''}
 
-    ${logros.length ? `
+    ${logrosLista.length ? `
     <div class="panel" style="margin-top:16px;">
-      <div class="panel-head"><h2>Logros recientes</h2></div>
+      <div class="panel-head"><h2>Logros recientes</h2>${htmlPaginacionHeader(pagLogros.pagina, pagLogros.totalPaginas, 'cambiarPaginaLogrosInicio')}</div>
       <div id="listaLogros"></div>
     </div>` : ''}
 
@@ -562,22 +666,33 @@ export async function renderDashboardTrabajador() {
     </div></div>` : ''}
   `;
 
-  if (pendientes.length) {
-    document.getElementById('listaAvisosPendientes').innerHTML = pendientes.map(i => filaModuloTrabajador(i, false)).join('');
+  if (continuarLista.length) {
+    document.getElementById('listaContinuarInicio').innerHTML = pagContinuar.items.map(i => filaModuloTrabajador(i, false)).join('');
   }
-  if (logros.length) {
-    document.getElementById('listaLogros').innerHTML = logros.map(i => `
-      <div class="modulo-asignado-item">
-        ${chipModulo(i.modulo, 40, 18)}
-        <div style="flex:1;">
-          <h4>${i.modulo.nombre}</h4>
-          <p>Completado el ${new Date(i.hist.fechaFin).toLocaleDateString('es-PE')} — puntaje ${i.hist.puntaje ?? '-'}%</p>
-        </div>
-        <button class="icon-btn primary-outline" onclick="verCertificadoStandalone('${i.modulo.id}', renderDashboardTrabajador)"><i data-lucide="award" size="13"></i> Certificado</button>
-      </div>`).join('');
+  if (pendientes.length) {
+    document.getElementById('listaAvisosPendientes').innerHTML = pagPendientes.items.map(i => filaModuloTrabajador(i, false)).join('');
+  }
+  if (logrosLista.length) {
+    document.getElementById('listaLogros').innerHTML = pagLogros.items.map(i => `
+        <div class="modulo-asignado-item">
+          ${chipModulo(i.modulo, 40, 18)}
+          <div style="flex:1;">
+            <h4>${i.modulo.nombre}</h4>
+            <p>Completado el ${new Date(i.hist.fechaFin).toLocaleDateString('es-PE')} — puntaje ${i.hist.puntaje ?? '-'}%</p>
+          </div>
+          <div style="display:flex;gap:8px;flex-shrink:0;">
+            <button class="icon-btn" style="white-space:nowrap;" onclick="abrirReproductor('${i.modulo.id}')"><i data-lucide="rotate-ccw" size="13"></i> Volver a ver</button>
+            ${i.modulo.certificadoUrl
+              ? `<button class="icon-btn primary-outline" style="white-space:nowrap;" onclick="verCertificadoStandalone('${i.modulo.id}', renderDashboardTrabajador)"><i data-lucide="award" size="13"></i> Certificado</button>`
+              : `<button class="icon-btn" disabled style="white-space:nowrap;opacity:.5;cursor:default;">Sin certificado</button>`}
+          </div>
+        </div>`).join('');
   }
   lucide.createIcons();
 }
+function cambiarPaginaContinuarInicio(n) { paginaContinuarInicio = n; renderDashboardTrabajador(); }
+function cambiarPaginaPendientesInicio(n) { paginaPendientesInicio = n; renderDashboardTrabajador(); }
+function cambiarPaginaLogrosInicio(n) { paginaLogrosInicio = n; renderDashboardTrabajador(); }
 
 let filtroMisModulos = 'todos';
 async function renderMisModulosTrabajador(filtro) {
@@ -600,6 +715,9 @@ async function renderMisModulosTrabajador(filtro) {
     : filtroMisModulos === 'completados' ? completados
     : items;
 
+  const totalPaginasMis = Math.max(1, Math.ceil(filtrados.length / TARJETAS_POR_PAGINA));
+  paginaMisModulos = Math.min(paginaMisModulos, totalPaginasMis);
+
   document.getElementById('content').innerHTML = `
     ${total ? `
     <div class="panel" style="display:flex;align-items:center;gap:24px;margin-bottom:20px;flex-wrap:wrap;">
@@ -616,16 +734,14 @@ async function renderMisModulosTrabajador(filtro) {
           <div><div class="num">${t.num}</div><div class="label">${t.label}</div></div>
         </div>`).join('')}
     </div>
+    ${filtrados.length ? `<div style="display:flex;justify-content:flex-end;margin:14px 0 8px;">${htmlPaginacionHeader(paginaMisModulos, totalPaginasMis, 'cambiarPaginaMisModulos')}</div>` : ''}
     <div class="grid-modulos" id="listaMisModulos"></div>
   `;
 
   if (filtrados.length) {
-    const totalPaginas = Math.max(1, Math.ceil(filtrados.length / TARJETAS_POR_PAGINA));
-    paginaMisModulos = Math.min(paginaMisModulos, totalPaginas);
     const inicio = (paginaMisModulos - 1) * TARJETAS_POR_PAGINA;
     document.getElementById('listaMisModulos').innerHTML =
-      filtrados.slice(inicio, inicio + TARJETAS_POR_PAGINA).map(i => tarjetaModuloTrabajador(i, 'modulos')).join('')
-      + htmlPaginacionTarjetas(paginaMisModulos, totalPaginas, 'cambiarPaginaMisModulos');
+      filtrados.slice(inicio, inicio + TARJETAS_POR_PAGINA).map(i => tarjetaModuloTrabajador(i, 'modulos')).join('');
   } else {
     document.getElementById('listaMisModulos').innerHTML = `<div class="empty-modulos"><i data-lucide="inbox" size="30"></i><p>No hay módulos en esta categoría.</p></div>`;
   }
@@ -641,14 +757,15 @@ async function renderCertificadosTrabajador() {
   document.getElementById('pageSubtitle').textContent = 'Certificados obtenidos por módulos completados';
   const { completados } = await datosCapacitacionesTrabajador();
 
-  document.getElementById('content').innerHTML = `<div class="grid-modulos" id="listaCertificados"></div>`;
+  const totalPaginasCert = Math.max(1, Math.ceil(completados.length / TARJETAS_POR_PAGINA));
+  paginaCertificados = Math.min(paginaCertificados, totalPaginasCert);
+  document.getElementById('content').innerHTML = `
+    ${completados.length ? `<div style="display:flex;justify-content:flex-end;margin-bottom:10px;">${htmlPaginacionHeader(paginaCertificados, totalPaginasCert, 'cambiarPaginaCertificados')}</div>` : ''}
+    <div class="grid-modulos" id="listaCertificados"></div>`;
   if (completados.length) {
-    const totalPaginas = Math.max(1, Math.ceil(completados.length / TARJETAS_POR_PAGINA));
-    paginaCertificados = Math.min(paginaCertificados, totalPaginas);
     const inicio = (paginaCertificados - 1) * TARJETAS_POR_PAGINA;
     document.getElementById('listaCertificados').innerHTML =
-      completados.slice(inicio, inicio + TARJETAS_POR_PAGINA).map(i => tarjetaModuloTrabajador(i, 'certificados')).join('')
-      + htmlPaginacionTarjetas(paginaCertificados, totalPaginas, 'cambiarPaginaCertificados');
+      completados.slice(inicio, inicio + TARJETAS_POR_PAGINA).map(i => tarjetaModuloTrabajador(i, 'certificados')).join('');
   } else {
     document.getElementById('listaCertificados').innerHTML = `<div class="empty-modulos"><i data-lucide="award" size="30"></i><p>Todavía no tienes certificados. Completa una capacitación para obtener el primero.</p></div>`;
   }
@@ -908,14 +1025,30 @@ const fCertificado = document.getElementById('fCertificado');
 const fileDropMiniatura = document.getElementById('fileDropMiniatura');
 const fMiniatura = document.getElementById('fMiniatura');
 let miniaturaExistenteUrl = null; // se conserva si al editar no se elige una nueva
+// Al presionar "Eliminar" sobre un archivo YA guardado (modo Editar), no
+// alcanza con limpiar el input — hay que avisarle al submit que ese campo
+// debe borrarse explícitamente en Firestore (omitirlo del payload significa
+// "no tocar", no "borrar"; ver el submit más abajo).
+let miniaturaEliminada = false;
+let preguntasEliminadas = false;
+let certificadoEliminado = false;
 
 // Galería visual de íconos del módulo: tarjetas clicables (sin dropdown
 // de texto), mismo estilo gráfico usado en el resto de la plataforma.
 const ICONOS_MODULO = [
+  // Originales
   'book-open', 'shield-check', 'hard-hat', 'users', 'heart-handshake', 'graduation-cap',
   'scale', 'flame', 'megaphone', 'file-text', 'briefcase', 'life-buoy',
   'alert-triangle', 'lock', 'leaf', 'truck', 'wrench', 'clipboard-check',
-  'heart-pulse', 'building-2', 'globe', 'shield-alert', 'gavel', 'award'
+  'heart-pulse', 'building-2', 'globe', 'shield-alert', 'gavel', 'award',
+  // Ampliación — seguridad, salud, capacitación, oficina, logística,
+  // transporte, herramientas, documentos, personas, medio ambiente
+  'shield', 'siren', 'flashlight', 'construction', 'traffic-cone',
+  'stethoscope', 'pill', 'syringe', 'thermometer', 'hospital',
+  'presentation', 'lightbulb', 'printer',
+  'ship', 'plane', 'package', 'anchor', 'route',
+  'hammer', 'cog', 'clipboard-list', 'file-signature',
+  'user-check', 'user-plus', 'recycle', 'sprout'
 ];
 function renderGaleriaIconos(seleccionado) {
   const cont = document.getElementById('galeriaIconos');
@@ -935,14 +1068,43 @@ function seleccionarIconoModulo(icono) {
   });
 }
 
+// Único indicador visual por cuadrante: 'ok' (✅ + papelera), 'error' (❌,
+// carga rechazada, sin papelera porque el input ya quedó vacío) o null
+// (sin archivo — cuadrante en su estado inicial). El tamaño/contenido del
+// recuadro nunca cambia, solo esta esquina.
+// El cuadrante "Módulo" no tiene papelera (btn puede no existir): es el
+// contenido principal de la capacitación, nunca se puede dejar el registro
+// sin archivo reproducible desde Editar — solo se reemplaza eligiendo uno
+// nuevo, que sustituye al existente automáticamente al guardar.
+function mostrarEstadoArchivo(prefijo, estado) {
+  const cont = document.getElementById('estado' + prefijo);
+  const badge = document.getElementById('badge' + prefijo);
+  const btn = document.getElementById('btnEliminar' + prefijo);
+  if (!cont || !badge) return;
+  if (estado === 'ok') {
+    badge.textContent = '✅';
+    if (btn) btn.style.display = 'flex';
+    cont.style.display = 'flex';
+  } else if (estado === 'error') {
+    badge.textContent = '❌';
+    if (btn) btn.style.display = 'none';
+    cont.style.display = 'flex';
+  } else {
+    cont.style.display = 'none';
+  }
+}
+
 async function abrirModalModulo(id) {
   formModulo.reset();
-  document.getElementById('nombreArchivo').textContent = '';
-  document.getElementById('nombrePreguntas').textContent = '';
-  document.getElementById('nombreCertificado').textContent = '';
-  document.getElementById('nombreMiniatura').textContent = '';
-  document.getElementById('previewMiniatura').style.display = 'none';
+  document.getElementById('previewMiniatura').src = '';
   miniaturaExistenteUrl = null;
+  miniaturaEliminada = false;
+  preguntasEliminadas = false;
+  certificadoEliminado = false;
+  mostrarEstadoArchivo('Miniatura', null);
+  mostrarEstadoArchivo('Archivo', null);
+  mostrarEstadoArchivo('Preguntas', null);
+  mostrarEstadoArchivo('Certificado', null);
   document.getElementById('formError').classList.remove('show');
   document.getElementById('mfId').value = id || '';
 
@@ -954,14 +1116,13 @@ async function abrirModalModulo(id) {
     document.getElementById('fCategoria').value = m.categoria || '';
     renderGaleriaIconos(m.icono || 'book-open');
     document.getElementById('fColor').value = m.color || '#2563eb';
-    document.getElementById('nombreArchivo').textContent = m.archivoNombre ? `Actual: ${m.archivoNombre} (elige otro archivo para reemplazarlo)` : '';
-    document.getElementById('nombrePreguntas').textContent = m.preguntas && m.preguntas.length ? `Actual: ${m.preguntasNombre || 'preguntas cargadas'} (${m.preguntas.length} preguntas — elige otro archivo para reemplazarlas)` : '';
-    document.getElementById('nombreCertificado').textContent = m.certificadoNombre ? `Actual: ${m.certificadoNombre} (elige otro PDF para reemplazarlo)` : '';
+    mostrarEstadoArchivo('Archivo', m.archivoNombre ? 'ok' : null);
+    mostrarEstadoArchivo('Preguntas', (m.preguntas && m.preguntas.length) ? 'ok' : null);
+    mostrarEstadoArchivo('Certificado', m.certificadoNombre ? 'ok' : null);
     if (m.miniaturaUrl) {
       miniaturaExistenteUrl = m.miniaturaUrl;
       document.getElementById('previewMiniatura').src = m.miniaturaUrl;
-      document.getElementById('previewMiniatura').style.display = 'block';
-      document.getElementById('nombreMiniatura').textContent = 'Actual (elige otra imagen para reemplazarla)';
+      mostrarEstadoArchivo('Miniatura', 'ok');
     }
   } else {
     document.getElementById('modalModuloTitulo').textContent = 'Nuevo módulo';
@@ -986,17 +1147,17 @@ function wireFileDrop(drop, input, onChange) {
 // almacenado y comparten el mismo código de subida más abajo.
 async function normalizarCarpetaModulo(zipPromise) {
   const nombreBase = (document.getElementById('fNombre').value.trim() || 'modulo').replace(/\s+/g, '_');
-  document.getElementById('nombreArchivo').textContent = 'Comprimiendo carpeta...';
   try {
     const zip = await zipPromise;
     const archivoZip = await jszipAArchivoZip(zip, nombreBase);
     const dt = new DataTransfer();
     dt.items.add(archivoZip);
     fArchivo.files = dt.files;
-    document.getElementById('nombreArchivo').textContent = `Seleccionado: ${archivoZip.name} (carpeta comprimida)`;
+    mostrarEstadoArchivo('Archivo', 'ok');
   } catch (e) {
     console.error('No se pudo comprimir la carpeta:', e);
-    document.getElementById('nombreArchivo').textContent = 'No se pudo leer la carpeta seleccionada.';
+    fArchivo.value = '';
+    mostrarEstadoArchivo('Archivo', 'error');
   }
 }
 
@@ -1005,7 +1166,14 @@ async function normalizarCarpetaModulo(zipPromise) {
 // síncrono del evento 'drop' (el DataTransfer deja de ser válido después).
 fArchivo.addEventListener('change', () => {
   const f = fArchivo.files[0];
-  document.getElementById('nombreArchivo').textContent = f ? `Seleccionado: ${f.name}` : '';
+  if (!f) return;
+  const ext = f.name.split('.').pop().toLowerCase();
+  if (!['zip', 'rar'].includes(ext)) {
+    fArchivo.value = '';
+    mostrarEstadoArchivo('Archivo', 'error');
+    return;
+  }
+  mostrarEstadoArchivo('Archivo', 'ok');
 });
 fileDrop.addEventListener('click', () => fArchivo.click());
 fileDrop.addEventListener('dragover', e => { e.preventDefault(); fileDrop.style.borderColor = 'var(--blue-600)'; });
@@ -1022,7 +1190,7 @@ fileDrop.addEventListener('drop', e => {
   }
   if (e.dataTransfer.files[0]) {
     fArchivo.files = e.dataTransfer.files;
-    document.getElementById('nombreArchivo').textContent = `Seleccionado: ${e.dataTransfer.files[0].name}`;
+    fArchivo.dispatchEvent(new Event('change'));
   }
 });
 // Redimensiona la miniatura a un ancho máximo (se guarda como data URL
@@ -1051,24 +1219,70 @@ function redimensionarImagen(archivo, anchoMaximo) {
 wireFileDrop(fileDropMiniatura, fMiniatura, async () => {
   const f = fMiniatura.files[0];
   if (!f) return;
-  document.getElementById('nombreMiniatura').textContent = 'Procesando imagen...';
+  const extOk = /^image\//.test(f.type) || /\.(jpe?g|png|webp)$/i.test(f.name);
+  if (!extOk) {
+    fMiniatura.value = '';
+    mostrarEstadoArchivo('Miniatura', 'error');
+    return;
+  }
+  miniaturaEliminada = false;
   try {
     const dataUrl = await redimensionarImagen(f, 640);
-    const preview = document.getElementById('previewMiniatura');
-    preview.src = dataUrl;
-    preview.style.display = 'block';
-    document.getElementById('nombreMiniatura').textContent = `Seleccionada: ${f.name}`;
+    document.getElementById('previewMiniatura').src = dataUrl;
+    mostrarEstadoArchivo('Miniatura', 'ok');
   } catch (e) {
-    document.getElementById('nombreMiniatura').textContent = 'No se pudo leer la imagen.';
+    fMiniatura.value = '';
+    mostrarEstadoArchivo('Miniatura', 'error');
   }
 });
 wireFileDrop(fileDropPreguntas, fPreguntas, () => {
   const f = fPreguntas.files[0];
-  document.getElementById('nombrePreguntas').textContent = f ? `Seleccionado: ${f.name}` : '';
+  if (!f) return;
+  const ext = f.name.split('.').pop().toLowerCase();
+  if (!['txt', 'docx', 'json'].includes(ext)) {
+    fPreguntas.value = '';
+    mostrarEstadoArchivo('Preguntas', 'error');
+    return;
+  }
+  preguntasEliminadas = false;
+  mostrarEstadoArchivo('Preguntas', 'ok');
 });
 wireFileDrop(fileDropCertificado, fCertificado, () => {
   const f = fCertificado.files[0];
-  document.getElementById('nombreCertificado').textContent = f ? `Seleccionado: ${f.name}` : '';
+  if (!f) return;
+  const ext = f.name.split('.').pop().toLowerCase();
+  if (ext !== 'pdf') {
+    fCertificado.value = '';
+    mostrarEstadoArchivo('Certificado', 'error');
+    return;
+  }
+  certificadoEliminado = false;
+  mostrarEstadoArchivo('Certificado', 'ok');
+});
+
+// Botón "Eliminar" de cada bloque: limpia el input/preview/estado y, si el
+// archivo ya existía guardado (modo Editar), marca el campo para borrarse
+// de verdad en Firestore al guardar (ver submit más abajo — omitir un
+// campo del payload significa "no tocar", no "borrar").
+document.getElementById('btnEliminarMiniatura').addEventListener('click', (e) => {
+  e.stopPropagation();
+  fMiniatura.value = '';
+  miniaturaExistenteUrl = null;
+  miniaturaEliminada = true;
+  document.getElementById('previewMiniatura').src = '';
+  mostrarEstadoArchivo('Miniatura', null);
+});
+document.getElementById('btnEliminarPreguntas').addEventListener('click', (e) => {
+  e.stopPropagation();
+  fPreguntas.value = '';
+  preguntasEliminadas = true;
+  mostrarEstadoArchivo('Preguntas', null);
+});
+document.getElementById('btnEliminarCertificado').addEventListener('click', (e) => {
+  e.stopPropagation();
+  fCertificado.value = '';
+  certificadoEliminado = true;
+  mostrarEstadoArchivo('Certificado', null);
 });
 
 formModulo.addEventListener('submit', async (e) => {
@@ -1124,6 +1338,8 @@ formModulo.addEventListener('submit', async (e) => {
       datos.miniaturaUrl = previewMiniatura.src;
     } else if (miniaturaExistenteUrl) {
       datos.miniaturaUrl = miniaturaExistenteUrl;
+    } else if (miniaturaEliminada) {
+      datos.miniaturaUrl = null; // omitir el campo = "no tocar"; null = borrar de verdad
     }
 
     // Normaliza .rar a .zip antes de subir: así el artefacto almacenado en
@@ -1157,12 +1373,21 @@ formModulo.addEventListener('submit', async (e) => {
         } else {
           datos.certificadoUrl = subidas[i].url;
           datos.certificadoNombre = archivoCertificado.name;
+          certificadoEliminado = false;
         }
       });
     }
+    if (!archivoCertificado && certificadoEliminado) {
+      datos.certificadoUrl = null;
+      datos.certificadoNombre = null;
+    }
+
     if (preguntasParseadas) {
       datos.preguntas = preguntasParseadas;
       datos.preguntasNombre = archivoPreguntas.name;
+    } else if (preguntasEliminadas) {
+      datos.preguntas = null;
+      datos.preguntasNombre = null;
     }
 
     if (idExistente) {
@@ -1239,13 +1464,6 @@ document.getElementById('btnHabilitarGrupo').addEventListener('click', async () 
 
   await conFeedback('Asignando módulo...', () => asignarModuloAGrupo(tipo, valor), {
     exito: tipo === 'todos' ? 'Módulo asignado a todos los trabajadores.' : `Módulo asignado a trabajadores de ${tipo} "${valor}".`,
-    error: 'No se pudo asignar el módulo.'
-  });
-});
-
-document.getElementById('btnAsignarATodos').addEventListener('click', async () => {
-  await conFeedback('Asignando módulo a todos...', () => asignarModuloAGrupo('todos', null), {
-    exito: 'Módulo asignado a todos los trabajadores.',
     error: 'No se pudo asignar el módulo.'
   });
 });
@@ -1354,7 +1572,7 @@ async function renderUsuarios() {
     <div class="table-wrap">
       <table>
         <thead><tr>
-          <th></th><th>Trabajador</th><th>Correo</th><th>Empresa</th><th>Sede</th><th>Gerencia</th><th>Estado</th><th>Puntaje</th><th>Acciones</th>
+          <th></th><th>Trabajador</th><th>Correo</th><th style="text-align:center;">Empresa</th><th style="text-align:center;">Sede</th><th style="text-align:center;">Gerencia</th><th style="text-align:center;">Estado</th><th style="text-align:center;">Puntaje</th><th style="text-align:center;">Acciones</th>
         </tr></thead>
         <tbody id="tablaUsuariosBody"></tbody>
       </table>
@@ -1411,19 +1629,19 @@ function pintarFilasUsuarios(lista) {
     const filaAcordeon = abierta ? `
       <tr class="subtabla-modulos">
         <td colspan="9">
-          <table>
-            <thead><tr><th>Módulo</th><th>Estado</th><th>Puntaje</th><th>Inicio</th><th>Fin</th><th>Certificado</th></tr></thead>
+          <table class="tabla-modulos-usuario">
+            <thead><tr><th style="text-align:left;">Módulo</th><th style="text-align:center;">Estado</th><th style="text-align:center;">Puntaje</th><th style="text-align:center;">Inicio</th><th style="text-align:center;">Fin</th><th style="text-align:center;">Certificado</th></tr></thead>
             <tbody>
               ${d.filas.length ? d.filas.map(f => `
-                <tr>
-                  <td style="display:flex;align-items:center;gap:8px;">${chipModulo(f.modulo, 26, 13)} ${f.modulo.nombre}</td>
-                  <td><span class="badge ${f.estado==='COMPLETADO'?'badge-activo':'badge-inactivo'}">${f.estado==='COMPLETADO'?'Completado':f.estado==='EN_PROGRESO'?'En progreso':'Pendiente'}</span></td>
-                  <td>${f.puntaje ?? '-'}</td>
-                  <td>${formatoFechaHora(f.hist && f.hist.fechaInicio)}</td>
-                  <td>${formatoFechaHora(f.hist && f.hist.fechaFin)}</td>
-                  <td>${f.estado === 'COMPLETADO' && f.modulo.certificadoUrl
-                    ? `<button class="icon-btn primary-outline" onclick="descargarCertificadoDeUsuario('${u.id}','${f.modulo.id}')"><i data-lucide="download" size="13"></i> Descargar</button>`
-                    : '<span style="color:var(--gray-400);font-size:.76rem;">-</span>'}</td>
+                <tr style="height:56px;">
+                  <td style="vertical-align:middle;text-align:left;"><div style="display:flex;align-items:center;justify-content:flex-start;gap:8px;">${chipModulo(f.modulo, 26, 10, 1.5)} ${f.modulo.nombre}</div></td>
+                  <td style="vertical-align:middle;text-align:center;"><span class="badge ${f.estado==='COMPLETADO'?'badge-activo':'badge-inactivo'}">${f.estado==='COMPLETADO'?'Completado':f.estado==='EN_PROGRESO'?'En progreso':'Pendiente'}</span></td>
+                  <td style="vertical-align:middle;text-align:center;">${f.puntaje ?? '-'}</td>
+                  <td style="vertical-align:middle;text-align:center;">${formatoFechaHora(f.hist && f.hist.fechaInicio)}</td>
+                  <td style="vertical-align:middle;text-align:center;">${formatoFechaHora(f.hist && f.hist.fechaFin)}</td>
+                  <td style="vertical-align:middle;"><div style="display:flex;justify-content:center;align-items:center;">${f.estado === 'COMPLETADO' && f.modulo.certificadoUrl
+                    ? `<button class="icon-btn primary-outline" style="flex:0 0 auto;" onclick="descargarCertificadoDeUsuario('${u.id}','${f.modulo.id}')"><i data-lucide="download" size="13"></i> Descargar</button>`
+                    : '<span style="color:var(--gray-400);font-size:.76rem;">-</span>'}</div></td>
                 </tr>`).join('') : `<tr><td colspan="6" style="text-align:center;color:var(--gray-500);">Sin módulos asignados.</td></tr>`}
             </tbody>
           </table>
@@ -1443,13 +1661,15 @@ function pintarFilasUsuarios(lista) {
         </div>
       </td>
       <td>${u.correo}</td>
-      <td>${u.empresa || '-'}</td>
-      <td>${u.sede || '-'}</td>
-      <td>${u.gerencia || '-'}</td>
-      <td><span class="badge ${estadoInfo.clase}">${estadoInfo.texto}</span></td>
-      <td>${d.puntajeProm ?? '-'}${d.puntajeProm != null ? '%' : ''}</td>
+      <td style="text-align:center;">${u.empresa || '-'}</td>
+      <td style="text-align:center;">${u.sede || '-'}</td>
+      <td style="text-align:center;">${u.gerencia || '-'}</td>
+      <td style="text-align:center;"><span class="badge ${estadoInfo.clase}">${estadoInfo.texto}</span></td>
+      <td style="text-align:center;">${d.puntajeProm ?? '-'}${d.puntajeProm != null ? '%' : ''}</td>
       <td onclick="event.stopPropagation()">
-        <button class="icon-btn" onclick="toggleMenuAcciones(event,'${u.id}')" title="Acciones"><i data-lucide="more-vertical" size="16"></i></button>
+        <div style="display:flex;justify-content:center;align-items:center;">
+          <button class="icon-btn" style="flex:0 0 auto;" onclick="toggleMenuAcciones(event,'${u.id}')" title="Acciones"><i data-lucide="more-vertical" size="16"></i></button>
+        </div>
       </td>
     </tr>
     ${filaAcordeon}
@@ -1890,7 +2110,29 @@ window.addEventListener('DOMContentLoaded', () => {
   // válida la restauración es transparente, sin flash del formulario.
   const dejarDeEscuchar = onAuthStateChanged(auth, async (user) => {
     dejarDeEscuchar();
-    const sesion = getSesion();
+    let sesion = getSesion();
+
+    // Pestaña/ventana nueva del mismo navegador: Firebase Auth ya restauró
+    // la sesión real (persistencia local por defecto del SDK, compartida
+    // entre pestañas — nunca se cambió a session-only acá), pero el caché
+    // de UI (sessionStorage, con setSesion) es por pestaña y arranca vacío.
+    // Sin esto, la app mandaba al login aunque la sesión siguiera siendo
+    // válida — hay que repoblar el caché desde Firestore antes de decidir.
+    if (!sesion && user) {
+      try {
+        const usuarios = await DB.obtenerUsuarios();
+        const encontrado = usuarios.find(u => u.correo === user.email);
+        if (encontrado && encontrado.estado === 'ACTIVO') {
+          setSesion(encontrado);
+          sesion = encontrado;
+        } else {
+          await signOut(auth);
+        }
+      } catch (e) {
+        console.error('No se pudo restaurar la sesión en esta pestaña:', e);
+      }
+    }
+
     if (sesion && user) {
       await iniciarApp();
       ocultarPantallaCarga();
@@ -1976,5 +2218,6 @@ Object.assign(window, {
   cambiarTabDrawerAsignar, toggleDrawerSeleccion,
   abrirModalImportar, exportarUsuariosExcel,
   toggleFilaAcordeon, toggleMenuAcciones, cambiarPaginaUsuarios, descargarCertificadoDeUsuario,
-  cambiarPaginaMisModulos, cambiarPaginaCertificados
+  cambiarPaginaMisModulos, cambiarPaginaCertificados,
+  cambiarPaginaContinuarInicio, cambiarPaginaPendientesInicio, cambiarPaginaLogrosInicio
 });
