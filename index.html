@@ -65,8 +65,8 @@ button { font-family:inherit; cursor:pointer; }
 .login-card .card-logo span { font-size:.58rem; letter-spacing:1.2px; color:var(--gray-500); }
 .login-card h2 { font-size:1.5rem; font-weight:800; color:var(--navy-900); margin-bottom:4px; }
 .login-card .subtitle { font-size:.86rem; color:var(--gray-500); margin-bottom:24px; }
-.field-group { margin-bottom:14px; }
-.field-label { font-size:.78rem; font-weight:600; color:var(--gray-700); display:block; margin-bottom:5px; }
+.field-group { margin-bottom:18px; }
+.field-label { font-size:.78rem; font-weight:600; color:var(--gray-700); display:block; margin-bottom:8px; }
 .field { display:flex; align-items:center; gap:9px; border:1px solid var(--gray-200); border-radius:var(--radius-md); padding:12px 14px; transition:border-color var(--transition), box-shadow var(--transition); }
 .field:focus-within { border-color:var(--blue-600); box-shadow:0 0 0 3px var(--blue-100); }
 .field svg { color:var(--gray-400); flex-shrink:0; }
@@ -80,7 +80,8 @@ button { font-family:inherit; cursor:pointer; }
 .hint-box strong { color:var(--gray-700); }
 
 /* ===================== APP SHELL ===================== */
-#viewApp { display:flex; height:100vh; }
+#viewApp { display:flex; height:100vh; opacity:1; transition:opacity .35s ease; }
+#viewApp.fade-in { opacity:0; }
 .sidebar { width:260px; flex-shrink:0; background:var(--navy-900); color:white; display:flex; flex-direction:column; padding:22px 18px; }
 .sidebar .logo { display:flex; align-items:center; gap:10px; padding:0 4px 6px; }
 .sidebar .logo .flag-icon { width:auto; height:38px; display:flex; align-items:center; justify-content:center; }
@@ -423,10 +424,11 @@ tr:last-child td { border-bottom:none; }
      mismo ritmo, y cada grupo de icono+texto queda centrado como unidad
      (antes el texto de beneficios/footer quedaba pegado a la izquierda
      de su icono, asimétrico respecto al resto de la composición). */
-  #viewLogin { position:relative; }
+  #viewLogin { position:relative; min-height:100vh; min-height:100dvh; }
   .hero-col {
     display:flex !important; position:relative; z-index:1; width:100%; min-width:0;
-    height:100vh; padding:40px 24px 32px;
+    height:100vh; height:100dvh; /* dvh: descuenta la barra de navegación/URL del navegador móvil (100vh no lo hacía, tapaba el footer) */
+    padding:32px 24px calc(24px + env(safe-area-inset-bottom));
     pointer-events:none; /* solo fondo/decoración en mobile: nada acá es clickeable, y sin esto
                             interceptaba los clics/toques que debían llegar a la card de login */
   }
@@ -610,7 +612,7 @@ input[type=color] { border:1px solid var(--gray-200); border-radius:var(--radius
   <section class="form-col">
     <div class="login-card">
       <h2>Iniciar sesión</h2>
-      <p class="subtitle">Ingresa con tu cuenta corporativa</p>
+      <p class="subtitle">Ingresa con tu número de DNI</p>
 
       <div class="error-msg" id="errorMsg"><i data-lucide="alert-circle" size="15"></i><span id="errorText"></span></div>
 

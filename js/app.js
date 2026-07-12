@@ -363,7 +363,12 @@ async function iniciarApp() {
   if (!usuario) return;
 
   document.getElementById('viewLogin').classList.add('hidden');
-  document.getElementById('viewApp').classList.remove('hidden');
+  // Transición suave de entrada (fade), no un cambio brusco de pantalla —
+  // puramente visual, no toca la lógica de autenticación de ningún modo.
+  const appEl = document.getElementById('viewApp');
+  appEl.classList.remove('hidden');
+  appEl.classList.add('fade-in');
+  requestAnimationFrame(() => requestAnimationFrame(() => appEl.classList.remove('fade-in')));
   iniciarControlInactividad();
 
   document.getElementById('nombreUsuario').textContent = nombreCompleto(usuario);
