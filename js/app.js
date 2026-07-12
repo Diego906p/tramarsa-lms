@@ -327,22 +327,6 @@ document.getElementById('togglePass').addEventListener('click', () => {
   lucide.createIcons();
 });
 
-// Transición "Glass Morphing": feedback táctil inmediato en el botón
-// (texto + spinner), luego toda la card hace un leve zoom mientras se
-// desvanece y el fondo aumenta su blur/oscurece un poco — la clase
-// 'saliendo' en #viewLogin dispara todo eso por CSS (ver index.html).
-// ~480ms, coordinado con el fade+translateY de entrada de #viewApp en
-// iniciarApp() para que se sienta una sola transición continua.
-function transicionGlassSalida(boton) {
-  return new Promise((resolve) => {
-    boton.disabled = true;
-    boton.innerHTML = '<i data-lucide="loader-circle" size="17" class="spin"></i> Iniciando sesión...';
-    lucide.createIcons();
-    document.getElementById('viewLogin').classList.add('saliendo');
-    setTimeout(resolve, 480);
-  });
-}
-
 document.getElementById('loginForm').addEventListener('submit', async (e) => {
   e.preventDefault();
   const dni = document.getElementById('loginDni').value.trim();
@@ -362,8 +346,6 @@ document.getElementById('loginForm').addEventListener('submit', async (e) => {
       return;
     }
     setSesion(usuario);
-    const botonSubmit = e.target.querySelector('button[type=submit]');
-    await transicionGlassSalida(botonSubmit);
     await iniciarApp();
   } catch (err) {
     console.error('Login:', err);
@@ -381,12 +363,7 @@ async function iniciarApp() {
   if (!usuario) return;
 
   document.getElementById('viewLogin').classList.add('hidden');
-  // Transición suave de entrada (fade), no un cambio brusco de pantalla —
-  // puramente visual, no toca la lógica de autenticación de ningún modo.
-  const appEl = document.getElementById('viewApp');
-  appEl.classList.remove('hidden');
-  appEl.classList.add('fade-in');
-  requestAnimationFrame(() => requestAnimationFrame(() => appEl.classList.remove('fade-in')));
+  document.getElementById('viewApp').classList.remove('hidden');
   iniciarControlInactividad();
 
   document.getElementById('nombreUsuario').textContent = nombreCompleto(usuario);

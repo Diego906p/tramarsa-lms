@@ -72,32 +72,15 @@ button { font-family:inherit; cursor:pointer; }
 .field svg { color:var(--gray-400); flex-shrink:0; }
 .field input { border:none; outline:none; width:100%; background:transparent; font-family:'Inter',sans-serif; font-size:.9rem; color:var(--gray-900); }
 .toggle-pass { background:none; border:none; color:var(--gray-400); display:flex; padding:0; }
-.btn-primary { width:100%; display:flex; align-items:center; justify-content:center; gap:8px; background:var(--blue-600); color:white; font-weight:700; font-size:.92rem; padding:14px; border:none; border-radius:var(--radius-md); transition:background var(--transition), transform .12s ease; }
+.btn-primary { width:100%; display:flex; align-items:center; justify-content:center; gap:8px; background:var(--blue-600); color:white; font-weight:700; font-size:.92rem; padding:14px; border:none; border-radius:var(--radius-md); transition:background var(--transition); }
 .btn-primary:hover { background:#0D4FE0; }
-.btn-primary:active { transform:scale(.97); } /* feedback táctil al presionar */
-.btn-primary:disabled { opacity:.9; cursor:default; }
-
-/* ============================================================
-   Transición de login → app ("Glass Morphing"): al autenticar
-   correctamente, #viewLogin recibe la clase 'saliendo' — la card hace un
-   leve zoom mientras se desvanece y el fondo aumenta blur/oscurece un
-   poco. El logo (hero-col, fuera de .login-card) no se toca, así que
-   sigue visible un instante más como elemento de continuidad. #viewApp
-   entra con fade+translateY (ver regla de #viewApp más arriba). Total
-   ~480ms, coordinado con transicionGlassSalida() en app.js.
-   ============================================================ */
-.login-card { transition: transform .48s cubic-bezier(.4,0,.2,1), opacity .42s ease; }
-#viewLogin.saliendo .login-card { transform:scale(1.03); opacity:0; }
-.hero-col::before { transition:filter .5s ease, opacity .5s ease; }
-#viewLogin.saliendo .hero-col::before { filter:blur(6px); opacity:.8; }
 .error-msg { display:none; align-items:center; gap:8px; background:var(--red-100); color:#B91C1C; font-size:.8rem; font-weight:500; padding:9px 13px; border-radius:9px; margin-bottom:14px; }
 .error-msg.show { display:flex; }
 .hint-box { background:var(--gray-50); border:1px solid var(--gray-200); border-radius:10px; padding:12px 14px; margin-top:20px; font-size:.76rem; color:var(--gray-500); line-height:1.6; }
 .hint-box strong { color:var(--gray-700); }
 
 /* ===================== APP SHELL ===================== */
-#viewApp { display:flex; height:100vh; opacity:1; transform:translateY(0); transition:opacity .4s ease, transform .4s cubic-bezier(.4,0,.2,1); }
-#viewApp.fade-in { opacity:0; transform:translateY(8px); }
+#viewApp { display:flex; height:100vh; }
 .sidebar { width:260px; flex-shrink:0; background:var(--navy-900); color:white; display:flex; flex-direction:column; padding:22px 18px; }
 .sidebar .logo { display:flex; align-items:center; gap:10px; padding:0 4px 6px; }
 .sidebar .logo .flag-icon { width:auto; height:38px; display:flex; align-items:center; justify-content:center; }
