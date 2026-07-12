@@ -434,17 +434,17 @@ tr:last-child td { border-bottom:none; }
   }
   .hero-logo { justify-content:center; padding-top:0; }
   .hero-logo .flag-icon { height:64px; }
-  .hero-mid { flex:1; display:flex; flex-direction:column; justify-content:flex-end; gap:32px; }
+  .hero-mid { flex:1; display:flex; flex-direction:column; justify-content:flex-end; gap:40px; }
   .hero-mid h1, .hero-mid p { display:none; } /* el mockup no repite el titular junto a la card */
   .benefits { justify-content:center; gap:24px; }
   .benefit { display:flex; flex-direction:column; align-items:center; text-align:center; }
   .benefit .icon-wrap { margin:0 0 12px; }
-  .hero-footer { justify-content:center; text-align:center; padding-top:24px; }
+  .hero-footer { padding-top:24px; } /* alineado a la izquierda, como en desktop — no centrado */
   .form-col {
     position:absolute; inset:0; z-index:2; display:flex; align-items:center; justify-content:center;
     padding:24px; background:none; pointer-events:none;
   }
-  .login-card { pointer-events:auto; }
+  .login-card { pointer-events:auto; transform:translateY(-28px); } /* separa la card del bloque de beneficios de abajo */
   .login-card .card-logo { display:none; } /* ya está el logo grande arriba, no repetirlo dentro de la card */
   .login-card {
     background:rgba(20,35,70,.55); backdrop-filter:blur(14px); -webkit-backdrop-filter:blur(14px);
@@ -605,7 +605,7 @@ input[type=color] { border:1px solid var(--gray-200); border-radius:var(--radius
     </div>
     <div class="hero-footer">
       <div class="icon-wrap"><i data-lucide="shield" size="16"></i></div>
-      <div><strong>Plataforma segura y confidencial</strong><span>Tu información está protegida.</span></div>
+      <div><strong>Capacitación corporativa</strong><span>Desarrolla tus competencias de forma continua.</span></div>
     </div>
   </section>
 

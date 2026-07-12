@@ -327,6 +327,35 @@ document.getElementById('togglePass').addEventListener('click', () => {
   lucide.createIcons();
 });
 
+// Transición "expandir el botón": el botón "Iniciar sesión" crece hasta
+// cubrir toda la pantalla y se desvanece justo cuando ya está en su lugar
+// la interfaz del LMS (que a su vez hace su propio fade-in, ver
+// iniciarApp) — una sola transición continua, no dos cortes separados.
+// Un único elemento temporal (no el botón real, para no tocar el form),
+// animado por transform (GPU, no reflow) — sin impacto de rendimiento
+// más allá de esta única animación de ~550ms.
+function transicionExpandirBoton(boton) {
+  return new Promise((resolve) => {
+    const r = boton.getBoundingClientRect();
+    const overlay = document.createElement('div');
+    overlay.style.cssText = `
+      position:fixed; top:${r.top}px; left:${r.left}px; width:${r.width}px; height:${r.height}px;
+      background:var(--blue-600); border-radius:${getComputedStyle(boton).borderRadius};
+      z-index:500; transform-origin:top left; will-change:transform,border-radius,opacity;
+      transition:transform .5s cubic-bezier(.4,0,.2,1), border-radius .5s cubic-bezier(.4,0,.2,1), opacity .3s ease .3s;
+    `;
+    document.body.appendChild(overlay);
+    const escalaX = window.innerWidth / r.width;
+    const escalaY = window.innerHeight / r.height;
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      overlay.style.transform = `translate(${-r.left}px,${-r.top}px) scale(${escalaX},${escalaY})`;
+      overlay.style.borderRadius = '0px';
+      setTimeout(() => { overlay.style.opacity = '0'; }, 320);
+      setTimeout(() => { overlay.remove(); resolve(); }, 600);
+    }));
+  });
+}
+
 document.getElementById('loginForm').addEventListener('submit', async (e) => {
   e.preventDefault();
   const dni = document.getElementById('loginDni').value.trim();
@@ -346,6 +375,8 @@ document.getElementById('loginForm').addEventListener('submit', async (e) => {
       return;
     }
     setSesion(usuario);
+    const botonSubmit = e.target.querySelector('button[type=submit]');
+    await transicionExpandirBoton(botonSubmit);
     await iniciarApp();
   } catch (err) {
     console.error('Login:', err);
