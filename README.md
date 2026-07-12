@@ -22,6 +22,7 @@ Navegador (cliente)
 - **Base de datos:** Cloud Firestore como única fuente de verdad de negocio.
 - **Archivos:** paquetes de módulo (`.zip`/`.rar`) y certificados (`.pdf`) se almacenan en un repositorio de GitHub dedicado, subidos automáticamente desde el panel de administración.
 - **Reproductor de contenido:** arquitectura universal — cualquier módulo con un `index.html` en su raíz se ejecuta dentro de un `<iframe>` aislado (sandbox, origen opaco) y se comunica con el LMS mediante un contrato `postMessage` documentado. El LMS nunca inspecciona la estructura interna del módulo.
+- **Responsive:** toda la interfaz (login, ambos paneles, modales, reproductor) está adaptada a móvil/tablet/desktop (breakpoint principal 880px) — ver sección 31 de la documentación técnica.
 
 Detalle completo de cada pieza (modelo de datos, protocolo SDK, decisiones de arquitectura, limitaciones conocidas) en la documentación técnica enlazada arriba.
 
