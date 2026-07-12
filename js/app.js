@@ -161,6 +161,15 @@ export function getSesion() {
 }
 export function setSesion(usuario) { sessionStorage.setItem('tramarsa_sesion', JSON.stringify(usuario)); }
 async function cerrarSesion() {
+  // Desactivar el control de inactividad ANTES de cualquier operación
+  // async: el propio clic en "Cerrar sesión" burbujea hasta el listener
+  // global de document (reiniciarTemporizadorInactividad) y, sin este
+  // guard, rearmaba un temporizador nuevo de 5 min mientras el logout
+  // seguía en curso — causaba un cierre de sesión "fantasma" más tarde
+  // y la sensación de que el botón manual "no funcionaba".
+  controlInactividadActivo = false;
+  limpiarTemporizadoresInactividad();
+  document.getElementById('modalInactividadOverlay').classList.remove('show');
   sessionStorage.removeItem('tramarsa_sesion');
   sessionStorage.removeItem('tramarsa_ruta');
   sessionStorage.removeItem('tramarsa_scroll');

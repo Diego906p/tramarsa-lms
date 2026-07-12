@@ -71,6 +71,7 @@ export class DriverIndexHtml {
     this.moduloId = null;
     this.clavePreferenciaAutoplay = null;
     this.autoplayActivo = true;
+    this.handlerFullscreenChange = null;
   }
 
   detectar(zip) {
@@ -166,7 +167,12 @@ export class DriverIndexHtml {
             this.totalDiapositivas = datos.total;
             this.audioListoIndiceActual = this.navegacionLibre || this.indiceActual < this.maximoAlcanzado;
             this.renderControles();
-            this.callbacks.onAvance(datos.indice + 1, datos.total + 1);
+            // Denominador = datos.total (cantidad real de diapositivas), NO
+            // datos.total+1: ese +1 de más hacía que el cálculo de avancePct
+            // nunca alcanzara el 100% real (siempre un tramo corto), aun en
+            // la última diapositiva. Bug real, reportado como "el progreso
+            // nunca completa el segmento".
+            this.callbacks.onAvance(datos.indice + 1, datos.total);
           }
           break;
         case 'modulo:audioFinalizado':
@@ -287,6 +293,9 @@ export class DriverIndexHtml {
         <button class="icon-btn" id="btnIndexHtmlAuto" style="flex:0;min-width:44px;${this.autoplayActivo ? 'color:' + this.colorAcento + ';' : ''}" title="${this.autoplayActivo ? 'Automático (clic para Manual)' : 'Manual (clic para Automático)'}">
           <i data-lucide="${this.autoplayActivo ? 'zap' : 'hand'}" size="16"></i>
         </button>
+        <button class="icon-btn" id="btnIndexHtmlFullscreen" style="flex:0;min-width:44px;" title="${document.fullscreenElement ? 'Salir de pantalla completa' : 'Pantalla completa'}">
+          <i data-lucide="${document.fullscreenElement ? 'minimize' : 'maximize'}" size="16"></i>
+        </button>
       </div>
       <p style="font-size:.74rem;color:var(--gray-500);margin-top:10px;text-align:center;">Puedes retroceder o pausar, pero no adelantar: "Siguiente" se habilita al terminar el audio de esta diapositiva.</p>
     `;
@@ -306,11 +315,26 @@ export class DriverIndexHtml {
       this.enviarComando('lms:alternarAutoplay', { activo: this.autoplayActivo });
       this.renderControles();
     });
+    // Opcional: Fullscreen API real sobre toda la vista del reproductor
+    // (#viewReproductor), no solo el iframe — así los controles propios del
+    // LMS (Prev/Play/barra/Auto) siguen visibles en pantalla completa. No
+    // cambia nada del comportamiento normal para quien no lo use.
+    document.getElementById('btnIndexHtmlFullscreen').addEventListener('click', () => {
+      const vista = document.getElementById('viewReproductor');
+      if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
+      else vista.requestFullscreen().catch(() => {});
+    });
+    if (!this.handlerFullscreenChange) {
+      this.handlerFullscreenChange = () => this.renderControles();
+      document.addEventListener('fullscreenchange', this.handlerFullscreenChange);
+    }
   }
 
   destruir() {
     clearTimeout(this.timeoutGracia);
     if (this.handlerMensaje) window.removeEventListener('message', this.handlerMensaje);
+    if (this.handlerFullscreenChange) document.removeEventListener('fullscreenchange', this.handlerFullscreenChange);
+    if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
     // Bug real: ocultar #viewReproductor con CSS (display:none) NO detiene
     // el iframe — sigue vivo, el audio sigue sonando y el Motor del módulo
     // sigue autoavanzando en segundo plano aunque nadie lo vea, corrompiendo
