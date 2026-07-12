@@ -108,9 +108,12 @@ export class DriverIndexHtml {
     this.moduloId = opciones.moduloId || null;
     this.clavePreferenciaAutoplay = this.moduloId ? `tramarsa_autoplay_${this.moduloId}` : null;
     this.autoplayActivo = this.leerPreferenciaAutoplay();
+    const __t0 = performance.now();
     const { url, urlsTemporales } = await construirDocumentoModulo(zip, rutaIndex);
+    console.log(`[tiempo-modulo] construirDocumentoModulo (encoding data: URI): +${Math.round(performance.now() - __t0)}ms`);
     this.urlsTemporales = urlsTemporales;
     urlsTemporalesCompartidas.push(...urlsTemporales);
+    this.__tIframeAsignado = performance.now();
 
     document.getElementById('reproductorPaso').textContent = 'Contenido del módulo';
 
@@ -143,6 +146,7 @@ export class DriverIndexHtml {
       const datos = evento.data || {};
       switch (datos.tipo) {
         case 'modulo:iniciado':
+          console.log(`[tiempo-modulo] handshake (iframe.src asignado -> modulo:iniciado recibido): +${Math.round(performance.now() - this.__tIframeAsignado)}ms`);
           clearTimeout(this.timeoutGracia);
           this.modoControlado = true;
           // Spinner de carga: se muestra desde el montaje hasta este punto,

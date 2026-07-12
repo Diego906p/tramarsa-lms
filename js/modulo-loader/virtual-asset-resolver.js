@@ -246,10 +246,22 @@ export async function construirDocumentoModulo(zip, rutaIndex) {
   // vez: cada archivo es independiente (map key propia, sin estado
   // compartido) y JSZip/FileReader no se bloquean entre sí. Con un
   // for-of + await secuencial, un módulo con muchas imágenes/audios podía
-  // tardar varios segundos extra solo en esta etapa — es la causa real de
-  // buena parte del tiempo de carga reportado como "excesivo".
+  // tardar varios segundos extra solo en esta etapa.
+  //
+  // Bug real de rendimiento corregido: esta pasada codificaba a data: URI
+  // TAMBIÉN los archivos de texto (html/css/js/json/svg) usando el Blob
+  // binario tal cual venía en el zip — pero la pasada de texto (abajo)
+  // los vuelve a codificar igual, esta vez con el contenido YA reescrito
+  // (rutas sustituidas), y ese es el que de verdad se usa. El resultado
+  // de esta primera pasada para archivos de texto SIEMPRE se pisaba —
+  // era una codificación base64 completa por archivo, al pedo. Con
+  // módulos de muchos KB de JS/CSS esto duplicaba el trabajo de encoding
+  // sin ningún efecto en el resultado final. Ahora esta pasada solo
+  // codifica binarios (imágenes/audio/video/fuentes); el texto se
+  // codifica una sola vez, en la pasada de abajo.
   await Promise.all(rutas.map(async (ruta) => {
     const relativa = ruta.slice(base.length);
+    if (EXT_TEXTO.has(extension(relativa))) return; // lo codifica la pasada de texto, con el contenido correcto
     const blob = await zip.files[ruta].async('blob');
     const url = await blobADataUri(blob, relativa);
     mapaBlobUrls.set(relativa, url);
@@ -257,8 +269,9 @@ export async function construirDocumentoModulo(zip, rutaIndex) {
   }));
 
   // Pasada estática: reescribe referencias literales dentro de cada
-  // archivo de texto (html/css/js/json/svg), no solo el index.html.
-  // También en paralelo, mismo motivo.
+  // archivo de texto (html/css/js/json/svg), no solo el index.html, y
+  // codifica el resultado ya reescrito — única codificación real para
+  // estos archivos. También en paralelo, mismo motivo.
   await Promise.all(rutas.map(async (ruta) => {
     const relativa = ruta.slice(base.length);
     if (!EXT_TEXTO.has(extension(relativa))) return;

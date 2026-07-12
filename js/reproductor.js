@@ -93,9 +93,24 @@ async function descargarArchivoDesdeUrl(url, nombre) {
   return new File([blob], nombre || url.split('/').pop());
 }
 
+// Instrumentación temporal de diagnóstico (tiempo excesivo e independiente
+// del peso del archivo, reportado por el cliente): imprime en consola (F12)
+// cuánto tarda cada etapa real de la cadena de carga, para saber dónde se
+// va el tiempo sin adivinar más. Quitar una vez identificado el cuello de
+// botella real.
+let __tUltimo = 0;
+function marcarTiempo(etiqueta) {
+  const ahora = performance.now();
+  console.log(`[tiempo-modulo] ${etiqueta}: +${Math.round(ahora - __tUltimo)}ms`);
+  __tUltimo = ahora;
+}
+
 async function abrirReproductor(moduloId) {
+  __tUltimo = performance.now();
+  console.log('[tiempo-modulo] === inicio ===');
   RP.moduloId = moduloId;
   RP.modulo = await DB.obtenerModulo(moduloId);
+  marcarTiempo('DB.obtenerModulo');
   if (!RP.modulo) return;
 
   document.getElementById('viewReproductor').classList.remove('hidden');
@@ -111,6 +126,7 @@ async function abrirReproductor(moduloId) {
   await DB.crearHistorialSiNoExiste(usuario.dni, moduloId, {
     estado: 'EN_PROGRESO', puntaje: null, avancePct: 0, fechaInicio: new Date().toISOString(), fechaFin: null
   });
+  marcarTiempo('DB.crearHistorialSiNoExiste');
 
   if (!RP.modulo.archivoUrl) {
     renderReproductorError('Este módulo no tiene un archivo .zip o .rar cargado todavía. Contacta al administrador.');
@@ -119,7 +135,9 @@ async function abrirReproductor(moduloId) {
 
   try {
     const archivo = await descargarArchivoDesdeUrl(RP.modulo.archivoUrl, RP.modulo.archivoNombre);
+    marcarTiempo('descarga del .zip/.rar (fetch)');
     RP.zip = await archivoAJSZip(archivo);
+    marcarTiempo('archivoAJSZip (parseo)');
   } catch (e) {
     console.error('No se pudo leer el archivo del módulo:', e);
     const mensajeEspecifico = e instanceof Error && e.message.includes('file://');
@@ -128,6 +146,7 @@ async function abrirReproductor(moduloId) {
   }
 
   await montarDriverDelModulo();
+  marcarTiempo('montarDriverDelModulo (construye documento + monta iframe; el handshake real puede seguir después)');
 }
 
 // El núcleo nunca pregunta "¿qué tipo de módulo es esto?": selecciona el
