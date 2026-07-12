@@ -173,7 +173,16 @@ async function cerrarSesion() {
   sessionStorage.removeItem('tramarsa_sesion');
   sessionStorage.removeItem('tramarsa_ruta');
   sessionStorage.removeItem('tramarsa_scroll');
-  await signOut(auth).catch(() => {});
+  // signOut(auth) es una llamada de red (revoca el token en el servidor de
+  // Firebase) — puede tardar varios segundos según la conexión. El cierre
+  // visible NO debe depender de eso: la sesión de la app ya terminó en
+  // cuanto se limpia sessionStorage arriba, así que el signOut real corre
+  // en segundo plano (fire-and-forget) y el reload es inmediato. Bug real
+  // corregido: antes el "await" bloqueaba el botón "Cerrar sesión" hasta
+  // que esa llamada de red resolviera, dando la sensación de que no
+  // respondía (varios segundos de espera, dependiente de la red, no del
+  // estado del temporizador de inactividad).
+  signOut(auth).catch(() => {});
   location.reload();
 }
 
