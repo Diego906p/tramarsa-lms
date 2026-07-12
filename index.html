@@ -429,6 +429,40 @@ tr:last-child td { border-bottom:none; }
   .rp-dwell-bar { order:1; flex-basis:100%; }
   #btnIndexHtmlPrev { order:0; }
 }
+
+/* ============================================================
+   RESPONSIVE — Fase 7: pase de refinamiento visual mobile
+   ============================================================ */
+/* Selector de color del sistema: mismo radio/borde que el resto de
+   inputs del formulario, en cualquier resolución (inconsistencia
+   visual existente, no solo mobile). */
+input[type=color] { border:1px solid var(--gray-200); border-radius:var(--radius-md); }
+
+@media (max-width: 880px) {
+  .panel { padding:16px; }
+  .stat-card { padding:14px; gap:10px; }
+  .toolbar { margin-bottom:14px; }
+  .filters-bar { gap:8px; margin-bottom:12px; }
+
+  /* Fila de acciones de Usuarios (Importar/Exportar/Actualizar/Nuevo
+     trabajador): antes en una sola fila sin wrap, desbordaba. Ahora:
+     "Nuevo trabajador" (acción principal) ocupa su propia fila arriba,
+     las 3 acciones secundarias se reparten debajo a partes iguales. */
+  .toolbar-right { flex-wrap:wrap; width:100%; }
+  .toolbar-right .btn-save { order:-1; flex:1 1 100%; justify-content:center; }
+  .toolbar-right .btn-outline { flex:1 1 0; justify-content:center; text-align:center; min-width:0; }
+
+  /* Filas de módulo con acciones (Inicio: Continúa/Pendientes/Logros):
+     si el nombre del módulo + botón no entran en una sola línea, el
+     botón(es) bajan a su propia fila en vez de comprimir el texto. */
+  .modulo-asignado-item { flex-wrap:wrap; row-gap:10px; }
+  .modulo-asignado-item > button { flex:1 1 100%; }
+  .fila-logro-acciones { flex:1 1 100%; }
+  .fila-logro-acciones .icon-btn { white-space:normal; }
+}
+@media (max-width: 400px) {
+  input[type=color] { height:38px; }
+}
 </style>
 </head>
 <body>

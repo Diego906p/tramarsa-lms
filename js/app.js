@@ -537,7 +537,7 @@ function filaModuloTrabajador(item, conCertificado) {
   return `
     <div class="modulo-asignado-item">
       ${chipModulo(m, 40, 18)}
-      <div style="flex:1;">
+      <div style="flex:1;min-width:0;">
         <h4>${m.nombre}</h4>
         <p>${m.categoria ? m.categoria + ' · ' : ''}${estadoTexto}</p>
         ${item.estado !== 'COMPLETADO' && item.avance > 0 ? `<div class="barra-progreso-mini"><div class="barra-progreso-mini-fill" style="width:${item.avance}%;background:${color.fg};"></div></div>` : ''}
@@ -699,11 +699,11 @@ export async function renderDashboardTrabajador() {
     document.getElementById('listaLogros').innerHTML = pagLogros.items.map(i => `
         <div class="modulo-asignado-item">
           ${chipModulo(i.modulo, 40, 18)}
-          <div style="flex:1;">
+          <div style="flex:1;min-width:0;">
             <h4>${i.modulo.nombre}</h4>
             <p>Completado el ${new Date(i.hist.fechaFin).toLocaleDateString('es-PE')} — puntaje ${i.hist.puntaje ?? '-'}%</p>
           </div>
-          <div style="display:flex;gap:8px;flex-shrink:0;">
+          <div class="fila-logro-acciones" style="display:flex;gap:8px;flex-shrink:0;">
             <button class="icon-btn" style="white-space:nowrap;" onclick="abrirReproductor('${i.modulo.id}')"><i data-lucide="rotate-ccw" size="13"></i> Volver a ver</button>
             ${i.modulo.certificadoUrl
               ? `<button class="icon-btn primary-outline" style="white-space:nowrap;" onclick="verCertificadoStandalone('${i.modulo.id}', renderDashboardTrabajador)"><i data-lucide="award" size="13"></i> Certificado</button>`
