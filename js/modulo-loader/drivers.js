@@ -72,6 +72,7 @@ export class DriverIndexHtml {
     this.clavePreferenciaAutoplay = null;
     this.autoplayActivo = true;
     this.handlerFullscreenChange = null;
+    this.timeoutAvisoFullscreen = null;
   }
 
   detectar(zip) {
@@ -108,9 +109,10 @@ export class DriverIndexHtml {
 
     contenedor.innerHTML = `
       <div class="rp-full" id="rpIndexHtmlCard">
-        <div class="rp-media-full" id="rpMediaIndexHtml" style="height:100%;">
+        <div class="rp-media-full" id="rpMediaIndexHtml" style="height:100%;position:relative;">
           <iframe id="rpIframeModulo" sandbox="allow-scripts allow-forms allow-popups" allow="autoplay; fullscreen"
             style="width:100%;height:100%;border:0;background:#fff;"></iframe>
+          <div id="rpAvisoFullscreen"></div>
         </div>
         <div id="rpControlsBarIndexHtml"></div>
         <div id="rpAvisoIncompatible" style="display:none;margin-top:10px;text-align:center;font-size:.8rem;color:var(--orange-500);">
@@ -325,13 +327,32 @@ export class DriverIndexHtml {
       else vista.requestFullscreen().catch(() => {});
     });
     if (!this.handlerFullscreenChange) {
-      this.handlerFullscreenChange = () => this.renderControles();
+      this.handlerFullscreenChange = () => {
+        this.renderControles();
+        if (document.fullscreenElement) this.mostrarAvisoFullscreen();
+      };
       document.addEventListener('fullscreenchange', this.handlerFullscreenChange);
     }
   }
 
+  // Aviso propio del LMS al entrar en fullscreen — breve y se autooculta.
+  // NO reemplaza el aviso nativo del navegador ("Presiona Esc para salir" /
+  // su equivalente táctil en móvil): eso es una medida de seguridad del
+  // propio estándar Fullscreen API (evita que una página suplante al
+  // sistema operativo) y ningún sitio puede suprimirlo ni personalizarlo,
+  // en ningún navegador. Este aviso es un complemento, no un reemplazo.
+  mostrarAvisoFullscreen() {
+    const aviso = document.getElementById('rpAvisoFullscreen');
+    if (!aviso) return;
+    aviso.textContent = 'Para salir: presiona de nuevo el botón de pantalla completa o usa Atrás';
+    aviso.classList.add('show');
+    clearTimeout(this.timeoutAvisoFullscreen);
+    this.timeoutAvisoFullscreen = setTimeout(() => aviso.classList.remove('show'), 3500);
+  }
+
   destruir() {
     clearTimeout(this.timeoutGracia);
+    clearTimeout(this.timeoutAvisoFullscreen);
     if (this.handlerMensaje) window.removeEventListener('message', this.handlerMensaje);
     if (this.handlerFullscreenChange) document.removeEventListener('fullscreenchange', this.handlerFullscreenChange);
     if (document.fullscreenElement) document.exitFullscreen().catch(() => {});

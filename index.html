@@ -288,6 +288,45 @@ tr:last-child td { border-bottom:none; }
 .rp-media-full iframe { width:100%; height:100%; border:none; }
 #viewReproductor:fullscreen .rp-full { padding:24px; }
 #viewReproductor:fullscreen #reproductorBody { padding:16px; }
+
+/* ============================================================
+   Fullscreen del reproductor — maximizar espacio real para el 16:9.
+   El header propio del LMS y la barra de controles (Prev/Play/Auto/
+   Fullscreen + texto de ayuda) seguían ocupando espacio fijo dentro
+   del elemento en fullscreen — en mobile (poca altura, sobre todo en
+   horizontal) eso le quitaba una porción grande al contenido real.
+   Se reduce/oculta todo lo no esencial mientras se está en fullscreen;
+   fuera de fullscreen nada de esto se activa (mismo comportamiento
+   de siempre en PC/uso normal).
+   ============================================================ */
+#viewReproductor:fullscreen header { height:36px !important; padding:0 10px !important; }
+#viewReproductor:fullscreen #reproductorTitulo,
+#viewReproductor:fullscreen #reproductorPaso { display:none; }
+#viewReproductor:fullscreen #btnSalirReproductor { width:26px; height:26px; }
+#viewReproductor:fullscreen .rp-full { padding:8px; }
+#viewReproductor:fullscreen #reproductorBody { padding:8px; }
+#viewReproductor:fullscreen #rpControlsBarIndexHtml p { display:none; } /* texto de ayuda: no esencial una vez ya se usó el control */
+#viewReproductor:fullscreen .rp-controls { gap:6px; margin-top:0; }
+@media (max-height: 480px) {
+  /* Landscape en teléfono: la altura ya es escasa por sí sola. El botón
+     de salir (X) se mantiene siempre visible — nunca depender solo del
+     botón Atrás del dispositivo para cerrar el reproductor. */
+  #viewReproductor:fullscreen header { height:24px !important; padding:0 6px !important; }
+  #viewReproductor:fullscreen #btnSalirReproductor { width:20px; height:20px; background:none; }
+  #viewReproductor:fullscreen .rp-full { padding:4px; }
+  #viewReproductor:fullscreen #reproductorBody { padding:4px; }
+}
+
+/* Aviso propio del LMS al entrar en fullscreen (complementa, no
+   reemplaza, el aviso nativo del navegador — ver nota más abajo). */
+#rpAvisoFullscreen {
+  position:absolute; left:50%; bottom:14px; transform:translateX(-50%);
+  background:rgba(6,20,50,.85); color:#fff; font-size:.74rem; font-weight:600;
+  padding:8px 14px; border-radius:99px; z-index:40; text-align:center;
+  opacity:0; pointer-events:none; transition:opacity .3s ease;
+  white-space:nowrap; max-width:92vw; overflow:hidden; text-overflow:ellipsis;
+}
+#rpAvisoFullscreen.show { opacity:1; }
 .rp-pregunta-num { font-size:.78rem; color:var(--gray-500); font-weight:600; margin-bottom:8px; }
 .rp-pregunta-texto { font-size:1.1rem; font-weight:700; color:var(--navy-900); margin-bottom:20px; line-height:1.4; }
 .rp-alternativa { display:flex; align-items:center; gap:12px; padding:14px 16px; border:1px solid var(--gray-200); border-radius:12px; margin-bottom:10px; cursor:pointer; transition:border-color var(--transition), background var(--transition); }
