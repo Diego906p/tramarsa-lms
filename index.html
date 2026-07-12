@@ -420,8 +420,10 @@ tr:last-child td { border-bottom:none; }
 @media (max-width: 880px) {
   #viewLogin { position:relative; }
   .hero-col {
-    display:flex !important; position:relative; width:100%; min-width:0;
+    display:flex !important; position:relative; z-index:1; width:100%; min-width:0;
     height:100vh; padding:40px 24px 28px;
+    pointer-events:none; /* solo fondo/decoración en mobile: nada acá es clickeable, y sin esto
+                            interceptaba los clics/toques que debían llegar a la card de login */
   }
   .hero-logo { justify-content:center; padding-top:10px; }
   .hero-logo .flag-icon { height:70px; }
@@ -429,7 +431,7 @@ tr:last-child td { border-bottom:none; }
   .hero-mid h1, .hero-mid p { display:none; } /* el mockup no repite el titular junto a la card */
   .benefits { justify-content:center; gap:22px; }
   .form-col {
-    position:absolute; inset:0; display:flex; align-items:center; justify-content:center;
+    position:absolute; inset:0; z-index:2; display:flex; align-items:center; justify-content:center;
     padding:24px; background:none; pointer-events:none;
   }
   .login-card { pointer-events:auto; }
