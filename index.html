@@ -24,6 +24,10 @@
   --transition:200ms cubic-bezier(.4,0,.2,1);
 }
 * { box-sizing:border-box; margin:0; padding:0; }
+/* Evita el "rubber-band"/overscroll (arrastrar más allá del límite deja ver
+   zonas vacías/fuera del área visible) en navegadores móviles — no afecta
+   el scroll normal dentro del contenido, solo el rebote fuera de límites. */
+html, body { overscroll-behavior:none; height:100%; }
 body { font-family:'Inter',sans-serif; background:var(--gray-50); color:var(--gray-900); }
 a { text-decoration:none; color:inherit; }
 button { font-family:inherit; cursor:pointer; }
@@ -94,7 +98,7 @@ button { font-family:inherit; cursor:pointer; }
 .sync-box button { margin-top:6px; width:100%; background:var(--blue-600); color:white; border:none; border-radius:8px; padding:7px; font-size:.74rem; font-weight:600; }
 .sync-box.connected button { background:rgba(255,255,255,.12); }
 
-.main { flex:1; display:flex; flex-direction:column; min-width:0; height:100vh; overflow-y:auto; }
+.main { flex:1; display:flex; flex-direction:column; min-width:0; height:100vh; overflow-y:auto; overscroll-behavior:contain; }
 .topbar { height:72px; background:white; border-bottom:1px solid var(--gray-200); display:flex; align-items:center; justify-content:space-between; padding:0 30px; flex-shrink:0; }
 .topbar-title { display:flex; align-items:center; gap:10px; min-width:0; }
 .topbar-title h1 { font-size:1.2rem; font-weight:800; color:var(--navy-900); }
@@ -407,9 +411,42 @@ tr:last-child td { border-bottom:none; }
 /* ============================================================
    RESPONSIVE — Fase 2: login (hero-col se oculta, form ocupa 100%)
    ============================================================ */
+/* Mobile: en vez de ocultar la foto/overlay y mostrar un formulario
+   plano blanco, se replica el mockup — logo grande arriba, tarjeta de
+   login "glass" (translúcida, blur) flotando sobre la misma foto de
+   fondo, beneficios (Aprende/Crece/Certifícate) y footer abajo. La
+   lógica de login (IDs, submit, validaciones) no se toca en absoluto:
+   esto es 100% CSS reordenando/reestilizando lo que ya existe. */
 @media (max-width: 880px) {
-  .hero-col { display:none; }
-  .form-col { padding:28px 20px; }
+  #viewLogin { position:relative; }
+  .hero-col {
+    display:flex !important; position:relative; width:100%; min-width:0;
+    height:100vh; padding:40px 24px 28px;
+  }
+  .hero-logo { justify-content:center; padding-top:10px; }
+  .hero-logo .flag-icon { height:70px; }
+  .hero-mid { flex:1; display:flex; flex-direction:column; justify-content:flex-end; }
+  .hero-mid h1, .hero-mid p { display:none; } /* el mockup no repite el titular junto a la card */
+  .benefits { justify-content:center; gap:22px; }
+  .form-col {
+    position:absolute; inset:0; display:flex; align-items:center; justify-content:center;
+    padding:24px; background:none; pointer-events:none;
+  }
+  .login-card { pointer-events:auto; }
+  .login-card .card-logo { display:none; } /* ya está el logo grande arriba, no repetirlo dentro de la card */
+  .login-card {
+    background:rgba(20,35,70,.55); backdrop-filter:blur(14px); -webkit-backdrop-filter:blur(14px);
+    border:1px solid rgba(255,255,255,.16); border-radius:20px; padding:28px 24px;
+    box-shadow:0 24px 60px -20px rgba(0,0,0,.5);
+  }
+  .login-card h2, .login-card .subtitle, .field-label { color:#fff; }
+  .login-card .subtitle { color:#C9D6EE; }
+  .field { background:rgba(255,255,255,.08); border-color:rgba(255,255,255,.28); }
+  .field input { color:#fff; }
+  .field input::placeholder { color:rgba(255,255,255,.55); }
+  .field svg, .toggle-pass { color:rgba(255,255,255,.7); }
+  .hint-box { background:rgba(255,255,255,.08); border-color:rgba(255,255,255,.2); color:#C9D6EE; }
+  .hint-box strong { color:#fff; }
 }
 @media (max-width: 400px) {
   .login-card h2 { font-size:1.3rem; }
@@ -420,15 +457,23 @@ tr:last-child td { border-bottom:none; }
    ============================================================ */
 @media (max-width: 880px) {
   .stat-grid { grid-template-columns:repeat(2,1fr); }
-  .stat-grid-usuarios { grid-template-columns:repeat(2,1fr); }
   .form-row { grid-template-columns:1fr; }
   .form-grid-2x2 { grid-template-columns:1fr; }
   .grid-modulos { grid-template-columns:repeat(auto-fill,minmax(220px,1fr)); }
 }
 @media (max-width: 560px) {
   .stat-grid { grid-template-columns:1fr; }
-  .stat-grid-usuarios { grid-template-columns:1fr; }
   .grid-modulos { grid-template-columns:1fr; }
+}
+/* Usuarios (Total/Activos/Inactivos): pedido explícito de mantener las 3
+   tarjetas en una sola fila incluso en mobile — se achica tipografía/padding
+   en vez de apilar, a diferencia del resto de stat-grids de la app. */
+@media (max-width: 560px) {
+  .stat-grid-usuarios { gap:8px; }
+  .stat-grid-usuarios .stat-card { padding:10px 8px; gap:8px; flex-direction:column; align-items:flex-start; }
+  .stat-grid-usuarios .stat-icon { width:28px; height:28px; }
+  .stat-grid-usuarios .stat-card .num { font-size:1rem; }
+  .stat-grid-usuarios .stat-card .label { font-size:.66rem; }
 }
 
 /* ============================================================
@@ -476,6 +521,13 @@ tr:last-child td { border-bottom:none; }
    inputs del formulario, en cualquier resolución (inconsistencia
    visual existente, no solo mobile). */
 input[type=color] { border:1px solid var(--gray-200); border-radius:var(--radius-md); }
+/* Selector de color: swatch compacto de tamaño fijo (nunca estirado a
+   100% del ancho) + hex legible al lado. Antes el input ocupaba todo el
+   ancho del formulario y en mobile se veía como una barra deforme; con
+   tamaño fijo se ve igual (y bien) en cualquier resolución. */
+.color-picker-row { display:flex; align-items:center; gap:10px; }
+.color-picker-row input[type=color] { width:56px; height:42px; padding:3px; flex-shrink:0; }
+.color-picker-row #fColorHex { font-family:monospace; font-size:.85rem; font-weight:600; color:var(--gray-700); text-transform:uppercase; }
 
 @media (max-width: 880px) {
   .panel { padding:16px; }
@@ -682,7 +734,10 @@ input[type=color] { border:1px solid var(--gray-200); border-radius:var(--radius
       </div>
       <div class="form-group">
         <label>Color</label>
-        <input type="color" id="fColor" value="#2563eb" style="height:42px;padding:4px;width:100%;">
+        <div class="color-picker-row">
+          <input type="color" id="fColor" value="#2563eb">
+          <span id="fColorHex">#2563EB</span>
+        </div>
       </div>
       <div class="form-grid-2x2">
         <div class="form-group">
@@ -770,10 +825,7 @@ input[type=color] { border:1px solid var(--gray-200); border-radius:var(--radius
         <div class="form-group"><label>Empresa</label><input type="text" id="uEmpresa" placeholder="Ej. Tramarsa"></div>
         <div class="form-group"><label>Sede</label><input type="text" id="uSede" placeholder="Ej. Lima"></div>
       </div>
-      <div class="form-row">
-        <div class="form-group"><label>Área</label><input type="text" id="uArea" placeholder="Ej. Operaciones"></div>
-        <div class="form-group"><label>Gerencia</label><input type="text" id="uGerencia" placeholder="Ej. Gerencia Comercial"></div>
-      </div>
+      <div class="form-group"><label>Gerencia</label><input type="text" id="uGerencia" placeholder="Ej. Gerencia Comercial"></div>
       <div class="modal-actions">
         <button type="button" class="btn-cancel" id="btnCancelarUsuario">Cancelar</button>
         <button type="submit" class="btn-save">Guardar</button>

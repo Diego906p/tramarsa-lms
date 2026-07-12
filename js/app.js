@@ -182,7 +182,21 @@ async function cerrarSesion() {
   // que esa llamada de red resolviera, dando la sensación de que no
   // respondía (varios segundos de espera, dependiente de la red, no del
   // estado del temporizador de inactividad).
-  signOut(auth).catch(() => {});
+  // Esperar signOut (operación LOCAL de Firebase Auth, normalmente casi
+  // instantánea) ANTES de recargar. Bug real encontrado al reinvestigar
+  // este mismo síntoma: si no se espera, el reload puede llegar antes de
+  // que Firebase termine de borrar la sesión persistida en IndexedDB —
+  // en la página recién cargada, onAuthStateChanged ve un usuario
+  // "fantasma" todavía autenticado y dispara una lectura COMPLETA de
+  // Firestore (DB.obtenerUsuarios(), en el arranque de la app) para
+  // intentar reconciliar la sesión, lo cual toma varios segundos — eso
+  // era el retraso, no signOut() en sí. Con Promise.race como límite de
+  // seguridad: si signOut() tardara anormalmente (red caída, etc.), no
+  // bloquea para siempre.
+  await Promise.race([
+    signOut(auth).catch(() => {}),
+    new Promise(resolve => setTimeout(resolve, 1500))
+  ]);
   location.reload();
 }
 
@@ -1091,6 +1105,9 @@ const ICONOS_MODULO = [
   'hammer', 'cog', 'clipboard-list', 'file-signature',
   'user-check', 'user-plus', 'recycle', 'sprout'
 ];
+document.getElementById('fColor').addEventListener('input', (e) => {
+  document.getElementById('fColorHex').textContent = e.target.value.toUpperCase();
+});
 function renderGaleriaIconos(seleccionado) {
   const cont = document.getElementById('galeriaIconos');
   cont.innerHTML = ICONOS_MODULO.map(icono => `
@@ -1157,6 +1174,7 @@ async function abrirModalModulo(id) {
     document.getElementById('fCategoria').value = m.categoria || '';
     renderGaleriaIconos(m.icono || 'book-open');
     document.getElementById('fColor').value = m.color || '#2563eb';
+    document.getElementById('fColorHex').textContent = (m.color || '#2563eb').toUpperCase();
     mostrarEstadoArchivo('Archivo', m.archivoNombre ? 'ok' : null);
     mostrarEstadoArchivo('Preguntas', (m.preguntas && m.preguntas.length) ? 'ok' : null);
     mostrarEstadoArchivo('Certificado', m.certificadoNombre ? 'ok' : null);
@@ -1168,6 +1186,7 @@ async function abrirModalModulo(id) {
   } else {
     document.getElementById('modalModuloTitulo').textContent = 'Nuevo módulo';
     renderGaleriaIconos('book-open');
+    document.getElementById('fColorHex').textContent = document.getElementById('fColor').value.toUpperCase();
   }
   modalOverlay.classList.add('show');
 }
@@ -1826,7 +1845,6 @@ async function editarUsuario(id) {
   document.getElementById('uCorreo').value = u.correo;
   document.getElementById('uEmpresa').value = u.empresa || '';
   document.getElementById('uSede').value = u.sede || '';
-  document.getElementById('uArea').value = u.area || '';
   document.getElementById('uGerencia').value = u.gerencia || '';
   document.getElementById('formErrorUsuario').classList.remove('show');
   modalUsuarioOverlay.classList.add('show');
@@ -1845,7 +1863,6 @@ document.getElementById('formUsuario').addEventListener('submit', async (e) => {
   const correo = document.getElementById('uCorreo').value.trim().toLowerCase();
   const empresa = document.getElementById('uEmpresa').value.trim();
   const sede = document.getElementById('uSede').value.trim();
-  const area = document.getElementById('uArea').value.trim();
   const gerencia = document.getElementById('uGerencia').value.trim();
   const errorBox = document.getElementById('formErrorUsuario');
   errorBox.classList.remove('show');
@@ -1865,11 +1882,11 @@ document.getElementById('formUsuario').addEventListener('submit', async (e) => {
 
       await crearCuentaAuthParaUsuario(correo, password);
       await DB.crearUsuario(dni, {
-        primerNombre, segundoNombre, apellidoPaterno, apellidoMaterno, correo, empresa, sede, area, gerencia,
+        primerNombre, segundoNombre, apellidoPaterno, apellidoMaterno, correo, empresa, sede, gerencia,
         rol: 'TRABAJADOR', estado: 'ACTIVO', debeCambiarPassword: password === dni
       });
     } else {
-      const datos = { primerNombre, segundoNombre, apellidoPaterno, apellidoMaterno, correo, empresa, sede, area, gerencia };
+      const datos = { primerNombre, segundoNombre, apellidoPaterno, apellidoMaterno, correo, empresa, sede, gerencia };
       await DB.actualizarUsuario(idExistente, datos);
       // Cambiar la contraseña de otro usuario desde el panel admin requeriría
       // Admin SDK/Cloud Functions (fuera de alcance): si el admin necesita
@@ -2106,7 +2123,6 @@ async function exportarUsuariosExcel() {
       'Apellidos': [u.apellidoPaterno, u.apellidoMaterno].filter(Boolean).join(' '),
       'DNI': u.dni,
       'Correo': u.correo,
-      'Área': u.area || '',
       'Empresa': u.empresa || '',
       'Sede': u.sede || '',
       'Gerencia': u.gerencia || '',
@@ -2229,7 +2245,7 @@ document.getElementById('formCrearAdmin').addEventListener('submit', async (e) =
     await DB.crearUsuario(dni, {
       primerNombre, segundoNombre: restoNombres.join(' '),
       apellidoPaterno, apellidoMaterno: restoApellidos.join(' '),
-      correo, sede: '', area: '', rol: 'ADMIN', estado: 'ACTIVO', debeCambiarPassword: false
+      correo, sede: '', rol: 'ADMIN', estado: 'ACTIVO', debeCambiarPassword: false
     });
 
     setSesion(await DB.obtenerUsuario(dni));

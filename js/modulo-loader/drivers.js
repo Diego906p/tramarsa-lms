@@ -49,7 +49,14 @@ import { construirDocumentoModulo } from './virtual-asset-resolver.js';
 // aviso de incompatibilidad — nunca un botón para saltar a la
 // evaluación sin haber recorrido el contenido (regla anti-trampa).
 // ---------------------------------------------------------------
-const GRACIA_SIN_SDK_MS = 8000;
+// 8000ms era demasiado corto: en redes/dispositivos lentos, la
+// descompresión+arranque real de un módulo con muchos archivos podía
+// tomar más que eso, y el aviso de "incompatible" llegaba a mostrarse
+// brevemente ANTES de que 'modulo:iniciado' llegara de verdad — un falso
+// positivo visual, no un problema real de compatibilidad. Ver también el
+// spinner de carga (#rpCargandoModulo) que cubre esta espera con un
+// mensaje neutral en vez de dejarlo en blanco.
+const GRACIA_SIN_SDK_MS = 18000;
 
 export class DriverIndexHtml {
   constructor() {
@@ -120,6 +127,10 @@ export class DriverIndexHtml {
           Este módulo no es compatible con el reproductor del LMS (no integra la API de comunicación).
           No es posible completarlo hasta que el administrador lo actualice.
         </div>
+        <div id="rpCargandoModulo" style="position:absolute;inset:0;background:#fff;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;">
+          <i data-lucide="loader-circle" size="28" class="spin" style="color:var(--blue-600);"></i>
+          <span style="font-size:.82rem;color:var(--gray-500);font-weight:600;">Cargando módulo...</span>
+        </div>
       </div>
     `;
     lucide.createIcons();
@@ -134,6 +145,12 @@ export class DriverIndexHtml {
         case 'modulo:iniciado':
           clearTimeout(this.timeoutGracia);
           this.modoControlado = true;
+          // Spinner de carga: se muestra desde el montaje hasta este punto,
+          // cubriendo la espera real (descompresión + arranque del módulo)
+          // con un mensaje neutral en vez de una pantalla en blanco — reduce
+          // el riesgo de que el usuario vea el aviso de incompatibilidad de
+          // pasada mientras el módulo todavía está arrancando.
+          { const cargando = document.getElementById('rpCargandoModulo'); if (cargando) cargando.remove(); }
           // Si el aviso de incompatibilidad ya se había mostrado (red lenta,
           // pestaña en segundo plano throttleada, etc.) y 'modulo:iniciado'
           // igual llega después, hay que ocultarlo — antes quedaba pegado
@@ -251,6 +268,8 @@ export class DriverIndexHtml {
     // permitir saltarse el contenido): solo se avisa la incompatibilidad.
     this.timeoutGracia = setTimeout(() => {
       if (this.modoControlado) return;
+      const cargando = document.getElementById('rpCargandoModulo');
+      if (cargando) cargando.remove();
       const aviso = document.getElementById('rpAvisoIncompatible');
       if (aviso) { aviso.style.display = 'block'; lucide.createIcons(); }
     }, GRACIA_SIN_SDK_MS);
@@ -282,54 +301,84 @@ export class DriverIndexHtml {
     const esUltima = this.indiceActual >= this.totalDiapositivas - 1;
     const puedeAvanzar = this.audioListoIndiceActual;
     const iconoPlayPausa = this.pausado ? 'play' : 'pause';
+    const enFullscreen = !!document.fullscreenElement;
+    // Pantalla completa: solo tiene sentido con Automático activo (el
+    // usuario no necesita tocar la pantalla para avanzar) — en Manual el
+    // propio flujo exige interactuar seguido, y hacerlo en fullscreen es
+    // más incómodo, no menos. Con Automático + fullscreen se ocultan los
+    // controles secundarios (Prev/Play/Auto) y solo queda la barra de
+    // progreso — casi toda la superficie para el contenido del módulo.
+    const fullscreenDisponible = this.autoplayActivo || enFullscreen;
+    const compacto = enFullscreen && this.autoplayActivo;
     barra.innerHTML = `
       <div class="rp-controls">
-        <button class="icon-btn" id="btnIndexHtmlPrev" style="flex:0;min-width:44px;" ${this.indiceActual === 0 ? 'disabled' : ''} title="Anterior"><i data-lucide="chevron-left" size="16"></i></button>
-        <button class="icon-btn" id="btnIndexHtmlPlayPausa" style="flex:0;min-width:44px;" title="${this.pausado ? 'Reanudar' : 'Pausar'}"><i data-lucide="${iconoPlayPausa}" size="16"></i></button>
+        ${compacto ? '' : `<button class="icon-btn" id="btnIndexHtmlPrev" style="flex:0;min-width:44px;" ${this.indiceActual === 0 ? 'disabled' : ''} title="Anterior"><i data-lucide="chevron-left" size="16"></i></button>
+        <button class="icon-btn" id="btnIndexHtmlPlayPausa" style="flex:0;min-width:44px;" title="${this.pausado ? 'Reanudar' : 'Pausar'}"><i data-lucide="${iconoPlayPausa}" size="16"></i></button>`}
         <div class="rp-dwell-bar" style="flex:1;height:6px;border-radius:999px;overflow:hidden;background:var(--gray-200);">
           <div id="rpProgresoRealFill" style="height:100%;width:${this.pctAvanceReal}%;background:${this.colorAcento};transition:width .12s linear;"></div>
         </div>
-        <button class="btn-save" id="btnIndexHtmlNext" ${puedeAvanzar ? '' : 'disabled'} style="${puedeAvanzar ? '' : 'opacity:.5;'}white-space:nowrap;">
+        ${compacto ? '' : `<button class="btn-save" id="btnIndexHtmlNext" ${puedeAvanzar ? '' : 'disabled'} style="${puedeAvanzar ? '' : 'opacity:.5;'}white-space:nowrap;">
           ${esUltima ? 'Continuar' : 'Siguiente'} <i data-lucide="arrow-right" size="14"></i>
         </button>
         <button class="icon-btn" id="btnIndexHtmlAuto" style="flex:0;min-width:44px;${this.autoplayActivo ? 'color:' + this.colorAcento + ';' : ''}" title="${this.autoplayActivo ? 'Automático (clic para Manual)' : 'Manual (clic para Automático)'}">
           <i data-lucide="${this.autoplayActivo ? 'zap' : 'hand'}" size="16"></i>
-        </button>
-        <button class="icon-btn" id="btnIndexHtmlFullscreen" style="flex:0;min-width:44px;" title="${document.fullscreenElement ? 'Salir de pantalla completa' : 'Pantalla completa'}">
-          <i data-lucide="${document.fullscreenElement ? 'minimize' : 'maximize'}" size="16"></i>
+        </button>`}
+        <button class="icon-btn" id="btnIndexHtmlFullscreen" style="flex:0;min-width:44px;${fullscreenDisponible ? '' : 'opacity:.4;'}" ${fullscreenDisponible ? '' : 'disabled'}
+          title="${enFullscreen ? 'Salir de pantalla completa' : (fullscreenDisponible ? 'Pantalla completa' : 'Disponible solo con avance Automático')}">
+          <i data-lucide="${enFullscreen ? 'minimize' : 'maximize'}" size="16"></i>
         </button>
       </div>
-      <p style="font-size:.74rem;color:var(--gray-500);margin-top:10px;text-align:center;">Puedes retroceder o pausar, pero no adelantar: "Siguiente" se habilita al terminar el audio de esta diapositiva.</p>
+      ${compacto ? '' : `<p style="font-size:.74rem;color:var(--gray-500);margin-top:10px;text-align:center;">Puedes retroceder o pausar, pero no adelantar: "Siguiente" se habilita al terminar el audio de esta diapositiva.</p>`}
     `;
     lucide.createIcons();
-    document.getElementById('btnIndexHtmlPrev').addEventListener('click', () => this.enviarComando('lms:anterior', {}));
-    document.getElementById('btnIndexHtmlNext').addEventListener('click', () => {
-      if (esUltima) this.callbacks.onFinalizado();
-      else this.enviarComando('lms:siguiente', {});
-    });
-    document.getElementById('btnIndexHtmlPlayPausa').addEventListener('click', () => {
-      if (this.pausado) this.enviarComando('lms:continuar', {});
-      else this.enviarComando('lms:pausar', {});
-    });
-    document.getElementById('btnIndexHtmlAuto').addEventListener('click', () => {
-      this.autoplayActivo = !this.autoplayActivo;
-      this.guardarPreferenciaAutoplay(this.autoplayActivo);
-      this.enviarComando('lms:alternarAutoplay', { activo: this.autoplayActivo });
-      this.renderControles();
-    });
+    if (!compacto) {
+      document.getElementById('btnIndexHtmlPrev').addEventListener('click', () => this.enviarComando('lms:anterior', {}));
+      document.getElementById('btnIndexHtmlNext').addEventListener('click', () => {
+        if (esUltima) this.callbacks.onFinalizado();
+        else this.enviarComando('lms:siguiente', {});
+      });
+      document.getElementById('btnIndexHtmlPlayPausa').addEventListener('click', () => {
+        if (this.pausado) this.enviarComando('lms:continuar', {});
+        else this.enviarComando('lms:pausar', {});
+      });
+      document.getElementById('btnIndexHtmlAuto').addEventListener('click', () => {
+        this.autoplayActivo = !this.autoplayActivo;
+        this.guardarPreferenciaAutoplay(this.autoplayActivo);
+        this.enviarComando('lms:alternarAutoplay', { activo: this.autoplayActivo });
+        // Si se apaga Automático mientras se está en fullscreen, salir —
+        // fullscreen solo tiene sentido con Automático (ver comentario arriba).
+        if (!this.autoplayActivo && document.fullscreenElement) document.exitFullscreen().catch(() => {});
+        this.renderControles();
+      });
+    }
     // Opcional: Fullscreen API real sobre toda la vista del reproductor
-    // (#viewReproductor), no solo el iframe — así los controles propios del
-    // LMS (Prev/Play/barra/Auto) siguen visibles en pantalla completa. No
-    // cambia nada del comportamiento normal para quien no lo use.
-    document.getElementById('btnIndexHtmlFullscreen').addEventListener('click', () => {
-      const vista = document.getElementById('viewReproductor');
-      if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
-      else vista.requestFullscreen().catch(() => {});
-    });
+    // (#viewReproductor), no solo el iframe — así el botón de salir del
+    // LMS sigue visible en pantalla completa. No cambia nada del
+    // comportamiento normal para quien no lo use.
+    const btnFs = document.getElementById('btnIndexHtmlFullscreen');
+    if (fullscreenDisponible) {
+      btnFs.addEventListener('click', () => {
+        const vista = document.getElementById('viewReproductor');
+        if (document.fullscreenElement) {
+          document.exitFullscreen().catch(() => {});
+        } else {
+          vista.requestFullscreen().catch(() => {}).then(() => {
+            // Orientación horizontal: solo algunos navegadores/SO la
+            // soportan (Chrome Android sí, iOS Safari no expone esta
+            // API) — se intenta, y si falla se sigue igual en el
+            // formato que ya tenga el dispositivo, sin bloquear nada.
+            if (screen.orientation && screen.orientation.lock) {
+              screen.orientation.lock('landscape').catch(() => {});
+            }
+          });
+        }
+      });
+    }
     if (!this.handlerFullscreenChange) {
       this.handlerFullscreenChange = () => {
         this.renderControles();
         if (document.fullscreenElement) this.mostrarAvisoFullscreen();
+        else if (screen.orientation && screen.orientation.unlock) screen.orientation.unlock();
       };
       document.addEventListener('fullscreenchange', this.handlerFullscreenChange);
     }

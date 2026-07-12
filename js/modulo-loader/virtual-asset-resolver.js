@@ -242,19 +242,26 @@ export async function construirDocumentoModulo(zip, rutaIndex) {
   // sub-recurso pedido desde dentro de un documento ya opaco — eso sí sigue
   // funcionando y no hace falta tocarlo. Los assets referenciados DESDE
   // DENTRO del documento (img/audio/css/js) sí necesitan data: URI.
-  for (const ruta of rutas) {
+  // Descompresión + codificación en PARALELO (Promise.all), no una a la
+  // vez: cada archivo es independiente (map key propia, sin estado
+  // compartido) y JSZip/FileReader no se bloquean entre sí. Con un
+  // for-of + await secuencial, un módulo con muchas imágenes/audios podía
+  // tardar varios segundos extra solo en esta etapa — es la causa real de
+  // buena parte del tiempo de carga reportado como "excesivo".
+  await Promise.all(rutas.map(async (ruta) => {
     const relativa = ruta.slice(base.length);
     const blob = await zip.files[ruta].async('blob');
     const url = await blobADataUri(blob, relativa);
     mapaBlobUrls.set(relativa, url);
     mapaPlano[relativa] = url;
-  }
+  }));
 
   // Pasada estática: reescribe referencias literales dentro de cada
   // archivo de texto (html/css/js/json/svg), no solo el index.html.
-  for (const ruta of rutas) {
+  // También en paralelo, mismo motivo.
+  await Promise.all(rutas.map(async (ruta) => {
     const relativa = ruta.slice(base.length);
-    if (!EXT_TEXTO.has(extension(relativa))) continue;
+    if (!EXT_TEXTO.has(extension(relativa))) return;
     let texto = await zip.files[ruta].async('text');
     texto = sustituirRutasLiterales(texto, mapaBlobUrls, relativa);
     contenidoTextoPorRuta.set(relativa, texto);
@@ -265,7 +272,7 @@ export async function construirDocumentoModulo(zip, rutaIndex) {
     const urlTexto = await blobADataUri(blobTexto, relativa);
     mapaBlobUrls.set(relativa, urlTexto);
     mapaPlano[relativa] = urlTexto;
-  }
+  }));
 
   const rutaIndexRelativa = rutaIndex.slice(base.length);
   let htmlIndex = await zip.files[rutaIndex].async('text');
