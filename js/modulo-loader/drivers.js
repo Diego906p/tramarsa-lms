@@ -29,6 +29,401 @@
 import { construirDocumentoModulo } from './virtual-asset-resolver.js';
 
 // ---------------------------------------------------------------
+// DriverLaminas — formato declarativo v2 (manifest.json), el formato
+// oficial de los módulos nuevos: el paquete es SOLO contenido
+// (imágenes + audios + manifest), sin index.html, sin JS propio, sin
+// controles propios. El LMS reproduce directamente en su propio
+// documento: sin iframe, sin sandbox, sin postMessage, sin resolver.
+// Eso elimina de raíz toda la familia de problemas del formato
+// anterior (origen opaco, blob/data URIs, MIME vacío, gesto de
+// autoplay dentro del iframe, gate anti-trampa duplicado).
+//
+// manifest.json:
+//   {
+//     "version": 2,
+//     "css": "estilos.css",              // opcional: CSS global de las láminas html
+//     "lienzo": { "ancho": 1920, "alto": 1080 },  // opcional (default 1920x1080)
+//     "laminas": [
+//       { "imagen": "img/...png", "audio": "audio/...mp3" },      // lámina imagen
+//       { "html": "laminas/...html", "audio": "audio/...mp3" }    // lámina html
+//     ]
+//   }
+//
+// Lámina "html": fragmento HTML puramente VISUAL (contenido de la
+// diapositiva + CSS compartido + JS decorativo opcional), renderizado
+// en un iframe sandbox por srcdoc. A diferencia del formato viejo, el
+// iframe es un póster, no una app: el LMS nunca le habla ni espera
+// nada de él — audio, navegación, gate y progreso son 100% del LMS,
+// idénticos a la lámina imagen. Los assets que el fragmento/CSS
+// referencien se sustituyen a data: URI (blob: no resuelve dentro de
+// un iframe de origen opaco — misma partición de Chrome ya documentada
+// en virtual-asset-resolver.js).
+//
+// La lógica académica (evaluación/certificado/Firestore) sigue en
+// reproductor.js vía los mismos callbacks onAvance/onFinalizado.
+// ---------------------------------------------------------------
+
+// JSZip deja blob.type='' — <audio> no tolera eso (falla en silencio,
+// bug ya documentado en virtual-asset-resolver.js). MIME siempre por
+// extensión.
+const MIME_LAMINAS = {
+  png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', webp: 'image/webp',
+  gif: 'image/gif', svg: 'image/svg+xml',
+  mp3: 'audio/mpeg', wav: 'audio/wav', ogg: 'audio/ogg', m4a: 'audio/mp4'
+};
+function mimeLamina(ruta) {
+  return MIME_LAMINAS[ruta.split('.').pop().toLowerCase()] || 'application/octet-stream';
+}
+
+/** Busca manifest.json al menor nivel de profundidad (tolera carpeta contenedora). */
+export function buscarManifest(zip) {
+  const candidatos = Object.keys(zip.files)
+    .filter(p => !zip.files[p].dir && /(^|\/)manifest\.json$/i.test(p))
+    .sort((a, b) => a.split('/').length - b.split('/').length);
+  return candidatos[0] || null;
+}
+
+// El navegador bloquea audio.play() si el gesto del usuario ya "expiró"
+// (la descarga del zip puede tardar varios segundos). Truco estándar:
+// durante el click original (abrirReproductor, antes de cualquier await)
+// se reproduce un WAV silencioso en un elemento Audio compartido — ese
+// elemento queda desbloqueado para toda la sesión de página y es el
+// mismo que usa DriverLaminas después. Así la primera lámina arranca
+// sonando sin pantalla "Iniciar módulo".
+const WAV_SILENCIO = 'data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAQB8AAIA+AAACABAAZGF0YQAAAAA=';
+let audioCompartido = null;
+export function desbloquearAudioLaminas() {
+  if (!audioCompartido) audioCompartido = new Audio();
+  try {
+    audioCompartido.src = WAV_SILENCIO;
+    audioCompartido.play().catch(() => {});
+  } catch (e) { /* si falla, el driver degrada a botón Play manual */ }
+  return audioCompartido;
+}
+
+export class DriverLaminas {
+  constructor() {
+    this.callbacks = null;
+    this.laminas = [];          // [{urlImagen, urlAudio}]
+    this.indiceActual = 0;
+    this.maximoAlcanzado = 0;
+    this.audioListoIndiceActual = false;
+    this.pausado = false;
+    this.navegacionLibre = false;
+    this.autoplayActivo = true;
+    this.colorAcento = 'var(--blue-600)';
+    this.moduloId = null;
+    this.clavePreferenciaAutoplay = null;
+    this.audio = null;
+    this.timeoutAutoAvance = null;
+    this.onPlayingBound = null;
+    this.onEndedBound = null;
+  }
+
+  detectar(zip) {
+    return !!buscarManifest(zip);
+  }
+
+  leerPreferenciaAutoplay() {
+    if (!this.clavePreferenciaAutoplay) return true;
+    const guardado = localStorage.getItem(this.clavePreferenciaAutoplay);
+    return guardado === null ? true : guardado === '1';
+  }
+  guardarPreferenciaAutoplay(activo) {
+    if (this.clavePreferenciaAutoplay) localStorage.setItem(this.clavePreferenciaAutoplay, activo ? '1' : '0');
+  }
+
+  async montar(contenedor, zip, rutaIndex, callbacks, urlsTemporalesCompartidas, pasoInicial = 0, navegacionLibre = false, opciones = {}) {
+    this.callbacks = callbacks;
+    this.navegacionLibre = navegacionLibre;
+    this.colorAcento = opciones.color || 'var(--blue-600)';
+    this.moduloId = opciones.moduloId || null;
+    this.clavePreferenciaAutoplay = this.moduloId ? `tramarsa_autoplay_${this.moduloId}` : null;
+    this.autoplayActivo = this.leerPreferenciaAutoplay();
+
+    const rutaManifest = buscarManifest(zip);
+    const base = rutaManifest.slice(0, rutaManifest.lastIndexOf('/') + 1);
+    let manifest;
+    try {
+      manifest = JSON.parse(await zip.files[rutaManifest].async('text'));
+    } catch (e) {
+      throw new Error('El manifest.json del módulo no es un JSON válido.');
+    }
+    if (!Array.isArray(manifest.laminas) || !manifest.laminas.length) {
+      throw new Error('El manifest.json del módulo no declara ninguna lámina.');
+    }
+
+    // CSS global y tamaño de lienzo de las láminas html (opcionales).
+    let cssModulo = '';
+    if (manifest.css && zip.files[base + manifest.css]) {
+      cssModulo = await zip.files[base + manifest.css].async('text');
+    }
+    const lienzoAncho = (manifest.lienzo && manifest.lienzo.ancho) || 1920;
+    const lienzoAlto = (manifest.lienzo && manifest.lienzo.alto) || 1080;
+
+    // Imágenes del paquete referenciadas por fragmentos html o por el CSS:
+    // se sustituyen a data: URI (dentro del iframe sandbox de origen opaco,
+    // blob: del padre no resuelve). Solo se convierte lo realmente citado.
+    const rutasImagenes = Object.keys(zip.files)
+      .filter(p => !zip.files[p].dir && p.startsWith(base) && /\.(png|jpe?g|webp|gif|svg)$/i.test(p))
+      .map(p => p.slice(base.length))
+      .sort((a, b) => b.length - a.length); // más larga primero: sin pisadas parciales
+    const sustituirAssets = async (texto) => {
+      for (const ruta of rutasImagenes) {
+        if (!texto.includes(ruta)) continue;
+        const bytes = await zip.files[base + ruta].async('arraybuffer');
+        const b64 = btoa(Array.from(new Uint8Array(bytes), c => String.fromCharCode(c)).join(''));
+        texto = texto.split(ruta).join(`data:${mimeLamina(ruta)};base64,${b64}`);
+      }
+      return texto;
+    };
+    if (cssModulo) cssModulo = await sustituirAssets(cssModulo);
+
+    const esqueletoSrcdoc = (fragmento) => `<!DOCTYPE html><html><head><meta charset="utf-8"><style>
+*{box-sizing:border-box}html,body{margin:0;padding:0;width:100%;height:100%;overflow:hidden;background:#111827}
+#lienzo{position:absolute;top:0;left:0;width:${lienzoAncho}px;height:${lienzoAlto}px;transform-origin:0 0;overflow:hidden;background:#fff}
+${cssModulo}
+</style></head><body><div id="lienzo">${fragmento}</div><script>
+(function(){function a(){var l=document.getElementById('lienzo');var e=Math.min(innerWidth/${lienzoAncho},innerHeight/${lienzoAlto});l.style.transform='translate('+((innerWidth-${lienzoAncho}*e)/2)+'px,'+((innerHeight-${lienzoAlto}*e)/2)+'px) scale('+e+')';}addEventListener('resize',a);a();})();
+<\/script></body></html>`;
+
+    // Audio siempre por blob: URL (elemento del documento del LMS, sin
+    // restricción de origen). Visual: imagen (blob:) o html (srcdoc).
+    this.laminas = [];
+    for (const lam of manifest.laminas) {
+      const entradaAud = lam.audio ? zip.files[base + lam.audio] : null;
+      if (lam.audio && !entradaAud) throw new Error(`El manifest declara "${lam.audio}" pero el archivo no existe en el paquete.`);
+      let urlAudio = null;
+      if (entradaAud) {
+        const blobAud = new Blob([await entradaAud.async('arraybuffer')], { type: mimeLamina(lam.audio) });
+        urlAudio = URL.createObjectURL(blobAud);
+        urlsTemporalesCompartidas.push(urlAudio);
+      }
+
+      if (lam.imagen) {
+        const entradaImg = zip.files[base + lam.imagen];
+        if (!entradaImg) throw new Error(`El manifest declara "${lam.imagen}" pero el archivo no existe en el paquete.`);
+        const blobImg = new Blob([await entradaImg.async('arraybuffer')], { type: mimeLamina(lam.imagen) });
+        const urlImagen = URL.createObjectURL(blobImg);
+        urlsTemporalesCompartidas.push(urlImagen);
+        this.laminas.push({ tipo: 'imagen', urlImagen, urlAudio });
+      } else if (lam.html) {
+        const entradaHtml = zip.files[base + lam.html];
+        if (!entradaHtml) throw new Error(`El manifest declara "${lam.html}" pero el archivo no existe en el paquete.`);
+        const fragmento = await sustituirAssets(await entradaHtml.async('text'));
+        this.laminas.push({ tipo: 'html', srcdoc: esqueletoSrcdoc(fragmento), urlAudio });
+      } else {
+        throw new Error('Cada lámina del manifest debe declarar "imagen" o "html".');
+      }
+    }
+
+    const total = this.laminas.length;
+    this.indiceActual = Math.min(pasoInicial, total - 1);
+    this.maximoAlcanzado = this.indiceActual;
+
+    document.getElementById('reproductorPaso').textContent = 'Contenido del módulo';
+    contenedor.innerHTML = `
+      <div class="rp-full" id="rpLaminasCard">
+        <div class="rp-media-full" id="rpLaminaMedia" style="height:100%;display:flex;align-items:center;justify-content:center;background:#fff;overflow:hidden;"></div>
+        <div id="rpControlsBarLaminas"></div>
+      </div>
+    `;
+
+    // Elemento Audio compartido ya desbloqueado por el click original
+    // (ver desbloquearAudioLaminas) — si no existe (flujo inesperado),
+    // se crea uno normal y el autoplay degradará a Play manual.
+    this.audio = audioCompartido || new Audio();
+    this.onPlayingBound = () => this.alEmpezarAudio();
+    this.onEndedBound = () => this.alTerminarAudio();
+    this.audio.addEventListener('playing', this.onPlayingBound);
+    this.audio.addEventListener('ended', this.onEndedBound);
+
+    this.mostrarLamina(this.indiceActual, this.autoplayActivo);
+    return () => this.destruir();
+  }
+
+  // Posición exacta de la barra calculada SIEMPRE desde el audio local
+  // (ground truth), nunca desde getComputedStyle ni variables cacheadas:
+  // pct = (láminas completas + fracción del audio actual) / total.
+  pctBarraActual() {
+    const total = this.laminas.length;
+    const frac = (this.audio && this.audio.duration && !isNaN(this.audio.duration))
+      ? Math.min(1, this.audio.currentTime / this.audio.duration) : 0;
+    return ((this.indiceActual + frac) / total) * 100;
+  }
+  fijarBarra(pct) {
+    const fill = document.getElementById('rpProgresoLamFill');
+    if (fill) { fill.style.transition = 'none'; fill.style.width = pct + '%'; }
+  }
+  animarBarraHaciaFinDeLamina() {
+    const fill = document.getElementById('rpProgresoLamFill');
+    if (!fill || !this.audio.duration || isNaN(this.audio.duration)) return;
+    const restanteMs = Math.max(0, (this.audio.duration - this.audio.currentTime) * 1000);
+    const destino = ((this.indiceActual + 1) / this.laminas.length) * 100;
+    fill.style.transition = 'none';
+    fill.style.width = this.pctBarraActual() + '%';
+    void fill.offsetWidth; // reflow: sin esto el navegador fusiona ambos cambios
+    fill.style.transition = `width ${restanteMs}ms linear`;
+    fill.style.width = destino + '%';
+  }
+
+  mostrarLamina(i, reproducir) {
+    clearTimeout(this.timeoutAutoAvance);
+    const total = this.laminas.length;
+    this.indiceActual = i;
+    const lam = this.laminas[i];
+    this.audioListoIndiceActual = this.navegacionLibre || i < this.maximoAlcanzado || !lam.urlAudio;
+
+    const media = document.getElementById('rpLaminaMedia');
+    if (media) {
+      if (lam.tipo === 'imagen') {
+        media.innerHTML = '<img alt="" style="width:100%;height:100%;object-fit:contain;display:block;">';
+        media.firstChild.src = lam.urlImagen;
+      } else {
+        // Iframe "póster": solo pinta el fragmento. Sin canal de
+        // comunicación — el LMS nunca espera nada de él. allow-scripts
+        // solo para el ajuste de escala del esqueleto y JS decorativo.
+        media.innerHTML = '<iframe sandbox="allow-scripts" style="width:100%;height:100%;border:0;display:block;background:#fff;"></iframe>';
+        media.firstChild.srcdoc = lam.srcdoc;
+      }
+    }
+
+    this.audio.pause();
+    if (this.laminas[i].urlAudio) {
+      this.audio.src = this.laminas[i].urlAudio;
+      this.audio.currentTime = 0;
+      if (reproducir) this.reproducir();
+      else this.pausado = true;
+    } else {
+      // Lámina sin audio: avance habilitado de inmediato.
+      this.pausado = true;
+    }
+    this.renderControles();
+    this.fijarBarra((i / total) * 100);
+    this.callbacks.onAvance(i + 1, total + 1);
+  }
+
+  reproducir() {
+    if (this.audio.ended) this.audio.currentTime = 0;
+    this.audio.play().then(() => {
+      this.pausado = false;
+      this.actualizarIconoPlayPausa();
+    }).catch(() => {
+      // Autoplay bloqueado (gesto expirado): degrada a Play manual.
+      this.pausado = true;
+      this.actualizarIconoPlayPausa();
+    });
+  }
+
+  pausar() {
+    this.audio.pause();
+    this.pausado = true;
+    this.fijarBarra(this.pctBarraActual()); // congela exactamente donde va
+    this.actualizarIconoPlayPausa();
+  }
+
+  alEmpezarAudio() {
+    this.pausado = false;
+    this.actualizarIconoPlayPausa();
+    this.animarBarraHaciaFinDeLamina();
+  }
+
+  alTerminarAudio() {
+    const total = this.laminas.length;
+    this.maximoAlcanzado = Math.max(this.maximoAlcanzado, this.indiceActual);
+    this.audioListoIndiceActual = true;
+    this.fijarBarra(((this.indiceActual + 1) / total) * 100); // fin exacto
+    const esUltima = this.indiceActual >= total - 1;
+    if (this.autoplayActivo && !esUltima) {
+      this.timeoutAutoAvance = setTimeout(() => this.mostrarLamina(this.indiceActual + 1, true), 600);
+    } else {
+      this.pausado = true;
+    }
+    this.renderControles();
+  }
+
+  actualizarIconoPlayPausa() {
+    const btn = document.getElementById('btnLamPlayPausa');
+    if (!btn) return;
+    btn.title = this.pausado ? 'Reproducir' : 'Pausar';
+    btn.innerHTML = `<i data-lucide="${this.pausado ? 'play' : 'pause'}" size="16"></i>`;
+    lucide.createIcons();
+  }
+
+  actualizarBotonAuto() {
+    const btn = document.getElementById('btnLamAuto');
+    if (!btn) return;
+    btn.title = this.autoplayActivo ? 'Automático (clic para Manual)' : 'Manual (clic para Automático)';
+    btn.style.color = this.autoplayActivo ? this.colorAcento : '';
+    btn.innerHTML = `<i data-lucide="${this.autoplayActivo ? 'zap' : 'hand'}" size="16"></i>`;
+    lucide.createIcons();
+  }
+
+  renderControles() {
+    const barra = document.getElementById('rpControlsBarLaminas');
+    if (!barra) return;
+    const total = this.laminas.length;
+    const esUltima = this.indiceActual >= total - 1;
+    const puedeAvanzar = this.audioListoIndiceActual;
+    barra.innerHTML = `
+      <div class="rp-controls">
+        <button class="icon-btn" id="btnLamPrev" style="flex:0;min-width:44px;" ${this.indiceActual === 0 ? 'disabled' : ''} title="Anterior"><i data-lucide="chevron-left" size="16"></i></button>
+        <button class="icon-btn" id="btnLamPlayPausa" style="flex:0;min-width:44px;" title="${this.pausado ? 'Reproducir' : 'Pausar'}"><i data-lucide="${this.pausado ? 'play' : 'pause'}" size="16"></i></button>
+        <div class="rp-dwell-bar" style="flex:1;height:6px;border-radius:999px;overflow:hidden;background:var(--gray-200);">
+          <div id="rpProgresoLamFill" style="height:100%;width:${this.pctBarraActual()}%;background:${this.colorAcento};"></div>
+        </div>
+        <button class="btn-save" id="btnLamNext" ${puedeAvanzar ? '' : 'disabled'} style="${puedeAvanzar ? '' : 'opacity:.5;'}white-space:nowrap;">
+          ${esUltima ? 'Continuar' : 'Siguiente'} <i data-lucide="arrow-right" size="14"></i>
+        </button>
+        <button class="icon-btn" id="btnLamAuto" style="flex:0;min-width:44px;${this.autoplayActivo ? 'color:' + this.colorAcento + ';' : ''}" title="${this.autoplayActivo ? 'Automático (clic para Manual)' : 'Manual (clic para Automático)'}">
+          <i data-lucide="${this.autoplayActivo ? 'zap' : 'hand'}" size="16"></i>
+        </button>
+      </div>
+      <p style="font-size:.74rem;color:var(--gray-500);margin-top:10px;text-align:center;">Puedes retroceder o pausar, pero no adelantar: "Siguiente" se habilita al terminar el audio de esta diapositiva.</p>
+    `;
+    lucide.createIcons();
+    // Rebuild recrea el nodo del fill: si el audio sigue sonando hay que
+    // relanzar la animación desde la posición real actual.
+    if (!this.audio.paused && !this.audio.ended) this.animarBarraHaciaFinDeLamina();
+    document.getElementById('btnLamPrev').addEventListener('click', () => {
+      if (this.indiceActual > 0) this.mostrarLamina(this.indiceActual - 1, this.autoplayActivo);
+    });
+    document.getElementById('btnLamNext').addEventListener('click', () => {
+      if (esUltima) this.callbacks.onFinalizado();
+      else this.mostrarLamina(this.indiceActual + 1, this.autoplayActivo);
+    });
+    document.getElementById('btnLamPlayPausa').addEventListener('click', () => {
+      if (this.pausado) this.reproducir();
+      else this.pausar();
+    });
+    document.getElementById('btnLamAuto').addEventListener('click', () => {
+      this.autoplayActivo = !this.autoplayActivo;
+      this.guardarPreferenciaAutoplay(this.autoplayActivo);
+      this.actualizarBotonAuto();
+      // Si acaba de activar Automático con el audio ya terminado, avanza
+      // solo (si no, queda esperando un click extra que Manual sí pide).
+      if (this.autoplayActivo && this.audio.ended && this.indiceActual < this.laminas.length - 1 && this.audioListoIndiceActual) {
+        this.timeoutAutoAvance = setTimeout(() => this.mostrarLamina(this.indiceActual + 1, true), 400);
+      }
+    });
+  }
+
+  destruir() {
+    clearTimeout(this.timeoutAutoAvance);
+    if (this.audio) {
+      this.audio.pause();
+      if (this.onPlayingBound) this.audio.removeEventListener('playing', this.onPlayingBound);
+      if (this.onEndedBound) this.audio.removeEventListener('ended', this.onEndedBound);
+      // El elemento es compartido (queda desbloqueado para el próximo
+      // módulo): solo se limpia la fuente, no se destruye.
+      this.audio.removeAttribute('src');
+      this.audio.load();
+      this.audio = null;
+    }
+  }
+}
+
+// ---------------------------------------------------------------
 // DriverIndexHtml — contrato universal: el único requisito es que
 // exista index.html. Se monta en un <iframe sandbox> aislado (sin
 // allow-same-origin: origen opaco, sin acceso a Firestore/Auth/window
@@ -108,12 +503,9 @@ export class DriverIndexHtml {
     this.moduloId = opciones.moduloId || null;
     this.clavePreferenciaAutoplay = this.moduloId ? `tramarsa_autoplay_${this.moduloId}` : null;
     this.autoplayActivo = this.leerPreferenciaAutoplay();
-    const __t0 = performance.now();
     const { url, urlsTemporales } = await construirDocumentoModulo(zip, rutaIndex);
-    console.log(`[tiempo-modulo] construirDocumentoModulo (encoding data: URI): +${Math.round(performance.now() - __t0)}ms`);
     this.urlsTemporales = urlsTemporales;
     urlsTemporalesCompartidas.push(...urlsTemporales);
-    this.__tIframeAsignado = performance.now();
 
     document.getElementById('reproductorPaso').textContent = 'Contenido del módulo';
 
@@ -146,7 +538,6 @@ export class DriverIndexHtml {
       const datos = evento.data || {};
       switch (datos.tipo) {
         case 'modulo:iniciado':
-          console.log(`[tiempo-modulo] handshake (iframe.src asignado -> modulo:iniciado recibido): +${Math.round(performance.now() - this.__tIframeAsignado)}ms`);
           clearTimeout(this.timeoutGracia);
           this.modoControlado = true;
           // Spinner de carga: se muestra desde el montaje hasta este punto,
@@ -432,6 +823,8 @@ export class DriverIndexHtml {
  * @param {JSZip} zip
  */
 export function seleccionarDriver(zip) {
-  const drivers = [new DriverIndexHtml()];
+  // DriverLaminas (manifest.json, formato oficial v2) tiene prioridad;
+  // DriverIndexHtml queda como fallback para paquetes del formato anterior.
+  const drivers = [new DriverLaminas(), new DriverIndexHtml()];
   return drivers.find(d => d.detectar(zip)) || null;
 }
