@@ -320,8 +320,25 @@ tr:last-child td { border-bottom:none; }
   #viewReproductor:fullscreen { padding-bottom:0 !important; }
   #viewReproductor:fullscreen header { display:none !important; }
   #viewReproductor:fullscreen .rp-full { padding:0 !important; }
-  #viewReproductor:fullscreen #reproductorBody { padding:0 !important; }
+  #viewReproductor:fullscreen #reproductorBody { padding:0 !important; margin:0 !important; }
+  /* Cero margen real: la zona de contenido pegada a los 4 bordes — sin
+     el margin-bottom:16px ni el redondeo que .rp-media-full trae en
+     vista normal, y sin espacio reservado por la barra de controles
+     (en inmersivo solo contiene la X flotante, position:fixed). */
+  #viewReproductor:fullscreen .rp-media-full { margin:0 !important; border-radius:0 !important; }
+  #viewReproductor:fullscreen #rpControlsBarLaminas,
+  #viewReproductor:fullscreen #rpControlsBarIndexHtml { margin:0 !important; padding:0 !important; }
 }
+/* X flotante del fullscreen inmersivo: emoji presionable, sin fondo,
+   con animación de hundimiento al tocar. */
+.btn-x-inmersivo {
+  position:fixed; top:calc(10px + env(safe-area-inset-top)); right:calc(10px + env(safe-area-inset-right));
+  border:none; background:none; padding:4px; font-size:30px; line-height:1;
+  z-index:60; cursor:pointer;
+  filter:drop-shadow(0 2px 6px rgba(0,0,0,.45));
+  transition:transform .12s ease;
+}
+.btn-x-inmersivo:active { transform:scale(.78); }
 @media (max-height: 480px) {
   /* Landscape en teléfono: la altura ya es escasa por sí sola. El botón
      de salir (X) se mantiene siempre visible — nunca depender solo del

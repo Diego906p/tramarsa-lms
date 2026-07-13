@@ -409,12 +409,7 @@ ${cssModulo}
     // flotante que SALE de pantalla completa (no cierra el módulo ni toca
     // el progreso; el CSS @media pointer:coarse oculta además el header).
     if (enFullscreen && window.matchMedia('(pointer: coarse)').matches) {
-      barra.innerHTML = `
-        <button id="btnLamSalirFs" title="Salir de pantalla completa"
-          style="position:fixed;top:calc(10px + env(safe-area-inset-top));right:calc(10px + env(safe-area-inset-right));width:42px;height:42px;border-radius:50%;border:none;background:rgba(0,0,0,.45);color:#fff;display:flex;align-items:center;justify-content:center;z-index:60;cursor:pointer;">
-          <i data-lucide="x" size="20"></i>
-        </button>`;
-      lucide.createIcons();
+      barra.innerHTML = `<button id="btnLamSalirFs" class="btn-x-inmersivo" title="Salir de pantalla completa">❌</button>`;
       document.getElementById('btnLamSalirFs').addEventListener('click', () => {
         document.exitFullscreen().catch(() => {});
       });
@@ -812,12 +807,7 @@ export class DriverIndexHtml {
     // INMERSIVO táctil: igual que en DriverLaminas — solo la presentación
     // y una X flotante que sale de fullscreen (no cierra el módulo).
     if (enFullscreen && window.matchMedia('(pointer: coarse)').matches) {
-      barra.innerHTML = `
-        <button id="btnIndexHtmlSalirFs" title="Salir de pantalla completa"
-          style="position:fixed;top:calc(10px + env(safe-area-inset-top));right:calc(10px + env(safe-area-inset-right));width:42px;height:42px;border-radius:50%;border:none;background:rgba(0,0,0,.45);color:#fff;display:flex;align-items:center;justify-content:center;z-index:60;cursor:pointer;">
-          <i data-lucide="x" size="20"></i>
-        </button>`;
-      lucide.createIcons();
+      barra.innerHTML = `<button id="btnIndexHtmlSalirFs" class="btn-x-inmersivo" title="Salir de pantalla completa">❌</button>`;
       document.getElementById('btnIndexHtmlSalirFs').addEventListener('click', () => {
         document.exitFullscreen().catch(() => {});
       });
