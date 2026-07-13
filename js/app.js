@@ -170,6 +170,9 @@ async function cerrarSesion() {
   controlInactividadActivo = false;
   limpiarTemporizadoresInactividad();
   document.getElementById('modalInactividadOverlay').classList.remove('show');
+  // Feedback inmediato: el reload + señal de signOut pueden tardar 1-3s en
+  // móvil — sin overlay, ese lapso se siente como "el botón no responde".
+  mostrarCargando('Cerrando sesión...');
   sessionStorage.removeItem('tramarsa_sesion');
   sessionStorage.removeItem('tramarsa_ruta');
   sessionStorage.removeItem('tramarsa_scroll');
@@ -197,6 +200,10 @@ async function cerrarSesion() {
     signOut(auth).catch(() => {}),
     new Promise(resolve => setTimeout(resolve, 1500))
   ]);
+  // Marca de logout voluntario: la página recargada muestra el login al
+  // instante sin esperar la resolución de onAuthStateChanged (1-2s menos
+  // de pantalla de carga; Auth igual corre por debajo como verificación).
+  sessionStorage.setItem('tramarsa_logout', '1');
   location.reload();
 }
 
@@ -2165,6 +2172,17 @@ window.addEventListener('DOMContentLoaded', () => {
   // si no, un simple refresh mandaba de vuelta al login por error.
   // Mientras tanto se muestra #viewCargando (nunca el login): con sesión
   // válida la restauración es transparente, sin flash del formulario.
+  // Arranque post-logout voluntario: mostrar el login de inmediato, sin
+  // esperar a que Firebase Auth resuelva (el usuario acaba de salir a
+  // propósito — esperar solo agrega segundos de pantalla de carga).
+  // onAuthStateChanged corre igual por debajo: si por algún motivo la
+  // sesión siguiera viva, el flujo normal retoma la app sin romper nada.
+  if (sessionStorage.getItem('tramarsa_logout')) {
+    sessionStorage.removeItem('tramarsa_logout');
+    document.getElementById('viewLogin').classList.remove('hidden');
+    ocultarPantallaCarga();
+  }
+
   const dejarDeEscuchar = onAuthStateChanged(auth, async (user) => {
     dejarDeEscuchar();
     let sesion = getSesion();

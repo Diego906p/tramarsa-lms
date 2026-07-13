@@ -80,8 +80,8 @@ button { font-family:inherit; cursor:pointer; }
 .hint-box strong { color:var(--gray-700); }
 
 /* ===================== APP SHELL ===================== */
-#viewApp { display:flex; height:100vh; }
-.sidebar { width:260px; flex-shrink:0; background:var(--navy-900); color:white; display:flex; flex-direction:column; padding:22px 18px; }
+#viewApp { display:flex; height:100vh; height:100dvh; /* dvh: descuenta la barra del navegador móvil (100vh dejaba el final tapado) */ }
+.sidebar { width:260px; flex-shrink:0; background:var(--navy-900); color:white; display:flex; flex-direction:column; padding:22px 18px calc(22px + env(safe-area-inset-bottom)); }
 .sidebar .logo { display:flex; align-items:center; gap:10px; padding:0 4px 6px; }
 .sidebar .logo .flag-icon { width:auto; height:38px; display:flex; align-items:center; justify-content:center; }
 .sidebar .logo strong { font-size:.95rem; font-weight:800; display:block; }
@@ -98,7 +98,7 @@ button { font-family:inherit; cursor:pointer; }
 .sync-box button { margin-top:6px; width:100%; background:var(--blue-600); color:white; border:none; border-radius:8px; padding:7px; font-size:.74rem; font-weight:600; }
 .sync-box.connected button { background:rgba(255,255,255,.12); }
 
-.main { flex:1; display:flex; flex-direction:column; min-width:0; height:100vh; overflow-y:auto; overscroll-behavior:contain; }
+.main { flex:1; display:flex; flex-direction:column; min-width:0; height:100vh; height:100dvh; overflow-y:auto; overscroll-behavior:contain; padding-bottom:env(safe-area-inset-bottom); /* barra de gestos superpuesta (iPhone/Android gesture nav) */ }
 .topbar { height:72px; background:white; border-bottom:1px solid var(--gray-200); display:flex; align-items:center; justify-content:space-between; padding:0 30px; flex-shrink:0; }
 .topbar-title { display:flex; align-items:center; gap:10px; min-width:0; }
 .topbar-title h1 { font-size:1.2rem; font-weight:800; color:var(--navy-900); }
@@ -156,7 +156,7 @@ button { font-family:inherit; cursor:pointer; }
 /* Drawer lateral (panel Usuarios → asignar módulos) */
 .drawer-overlay { position:fixed; inset:0; background:rgba(6,30,78,.45); display:none; justify-content:flex-end; z-index:60; }
 .drawer-overlay.show { display:flex; }
-.drawer { width:420px; max-width:100%; background:white; height:100vh; display:flex; flex-direction:column; box-shadow:-8px 0 24px rgba(6,30,78,.12); }
+.drawer { width:420px; max-width:100%; background:white; height:100vh; height:100dvh; display:flex; flex-direction:column; box-shadow:-8px 0 24px rgba(6,30,78,.12); }
 .drawer-head { display:flex; align-items:center; justify-content:space-between; padding:18px 20px; border-bottom:1px solid var(--gray-100); }
 .drawer-head h2 { font-size:1.05rem; font-weight:800; color:var(--navy-900); }
 .drawer-close { background:var(--gray-100); border:none; width:32px; height:32px; border-radius:9px; display:flex; align-items:center; justify-content:center; color:var(--gray-700); }
@@ -458,6 +458,8 @@ tr:last-child td { border-bottom:none; }
   .field svg, .toggle-pass { color:rgba(255,255,255,.7); }
   .hint-box { background:rgba(255,255,255,.08); border-color:rgba(255,255,255,.2); color:#C9D6EE; }
   .hint-box strong { color:#fff; }
+  /* Centrado respecto al botón "Iniciar sesión" (ancho completo) */
+  #btnOlvidoPassword { display:block; width:100%; text-align:center; color:#C9D6EE; }
 }
 @media (max-width: 400px) {
   .login-card h2 { font-size:1.3rem; }
@@ -532,12 +534,9 @@ tr:last-child td { border-bottom:none; }
    inputs del formulario, en cualquier resolución (inconsistencia
    visual existente, no solo mobile). */
 input[type=color] { border:1px solid var(--gray-200); border-radius:var(--radius-md); }
-/* Selector de color: swatch compacto de tamaño fijo (nunca estirado a
-   100% del ancho) + hex legible al lado. Antes el input ocupaba todo el
-   ancho del formulario y en mobile se veía como una barra deforme; con
-   tamaño fijo se ve igual (y bien) en cualquier resolución. */
+/* Selector de color: barra ancha (llena la fila) + hex legible al lado. */
 .color-picker-row { display:flex; align-items:center; gap:10px; }
-.color-picker-row input[type=color] { width:56px; height:42px; padding:3px; flex-shrink:0; }
+.color-picker-row input[type=color] { flex:1; min-width:0; height:42px; padding:3px; }
 .color-picker-row #fColorHex { font-family:monospace; font-size:.85rem; font-weight:600; color:var(--gray-700); text-transform:uppercase; }
 
 @media (max-width: 880px) {
@@ -919,7 +918,7 @@ input[type=color] { border:1px solid var(--gray-200); border-radius:var(--radius
 <!-- ============================================================ -->
 <!-- VISTA: REPRODUCTOR DE MÓDULO -->
 <!-- ============================================================ -->
-<div id="viewReproductor" class="hidden" style="position:fixed;inset:0;background:var(--gray-50);z-index:100;display:flex;flex-direction:column;">
+<div id="viewReproductor" class="hidden" style="position:fixed;inset:0;background:var(--gray-50);z-index:100;display:flex;flex-direction:column;padding-bottom:env(safe-area-inset-bottom);">
   <header style="height:64px;background:var(--navy-900);color:white;display:flex;align-items:center;justify-content:space-between;padding:0 24px;flex-shrink:0;">
     <div style="display:flex;align-items:center;gap:12px;">
       <button id="btnSalirReproductor" style="background:rgba(255,255,255,.1);border:none;color:white;width:34px;height:34px;border-radius:9px;display:flex;align-items:center;justify-content:center;"><i data-lucide="x" size="18"></i></button>

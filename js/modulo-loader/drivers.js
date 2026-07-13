@@ -118,6 +118,8 @@ export class DriverLaminas {
     this.timeoutAutoAvance = null;
     this.onPlayingBound = null;
     this.onEndedBound = null;
+    this.handlerFullscreenChange = null;
+    this.timeoutAvisoFullscreen = null;
   }
 
   detectar(zip) {
@@ -187,8 +189,27 @@ ${cssModulo}
 (function(){function a(){var l=document.getElementById('lienzo');var e=Math.min(innerWidth/${lienzoAncho},innerHeight/${lienzoAlto});l.style.transform='translate('+((innerWidth-${lienzoAncho}*e)/2)+'px,'+((innerHeight-${lienzoAlto}*e)/2)+'px) scale('+e+')';}addEventListener('resize',a);a();})();
 <\/script></body></html>`;
 
+    // Formato de archivo único: "contenido" = UN solo HTML con todas las
+    // láminas como <section class="slide"> en orden + su <style>. Pensado
+    // para plantillas que un tercero o una IA regenera tocando un único
+    // archivo (contenido y diseño visual interno libres, estructura de
+    // secciones intocable): el driver extrae secciones y estilos él mismo.
+    let seccionesContenido = null;
+    if (manifest.contenido) {
+      const entradaCont = zip.files[base + manifest.contenido];
+      if (!entradaCont) throw new Error(`El manifest declara "${manifest.contenido}" pero el archivo no existe en el paquete.`);
+      const textoCont = await sustituirAssets(await entradaCont.async('text'));
+      const docCont = new DOMParser().parseFromString(textoCont, 'text/html');
+      docCont.querySelectorAll('style').forEach(s => { cssModulo += '\n' + s.textContent; });
+      seccionesContenido = Array.from(docCont.querySelectorAll('section.slide'));
+      if (seccionesContenido.length < manifest.laminas.length) {
+        throw new Error(`El contenido tiene ${seccionesContenido.length} láminas pero el manifest declara ${manifest.laminas.length}.`);
+      }
+    }
+
     // Audio siempre por blob: URL (elemento del documento del LMS, sin
-    // restricción de origen). Visual: imagen (blob:) o html (srcdoc).
+    // restricción de origen). Visual: imagen (blob:), html (srcdoc) o
+    // sección extraída del contenido único.
     this.laminas = [];
     for (const lam of manifest.laminas) {
       const entradaAud = lam.audio ? zip.files[base + lam.audio] : null;
@@ -212,8 +233,12 @@ ${cssModulo}
         if (!entradaHtml) throw new Error(`El manifest declara "${lam.html}" pero el archivo no existe en el paquete.`);
         const fragmento = await sustituirAssets(await entradaHtml.async('text'));
         this.laminas.push({ tipo: 'html', srcdoc: esqueletoSrcdoc(fragmento), urlAudio });
+      } else if (seccionesContenido) {
+        const seccion = seccionesContenido[this.laminas.length];
+        seccion.classList.add('activa');
+        this.laminas.push({ tipo: 'html', srcdoc: esqueletoSrcdoc(seccion.outerHTML), urlAudio });
       } else {
-        throw new Error('Cada lámina del manifest debe declarar "imagen" o "html".');
+        throw new Error('Cada lámina del manifest debe declarar "imagen" o "html" (o el manifest debe declarar "contenido").');
       }
     }
 
@@ -225,6 +250,7 @@ ${cssModulo}
     contenedor.innerHTML = `
       <div class="rp-full" id="rpLaminasCard">
         <div class="rp-media-full" id="rpLaminaMedia" style="height:100%;display:flex;align-items:center;justify-content:center;background:#fff;overflow:hidden;"></div>
+        <div id="rpAvisoFullscreen"></div>
         <div id="rpControlsBarLaminas"></div>
       </div>
     `;
@@ -365,51 +391,107 @@ ${cssModulo}
     const total = this.laminas.length;
     const esUltima = this.indiceActual >= total - 1;
     const puedeAvanzar = this.audioListoIndiceActual;
+    const enFullscreen = !!document.fullscreenElement;
+    // Pantalla completa: mismo criterio que DriverIndexHtml — solo tiene
+    // sentido con Automático (en Manual hay que interactuar seguido); con
+    // Automático + fullscreen los controles secundarios se ocultan y queda
+    // solo barra + botón de salir (modo compacto).
+    const fullscreenDisponible = this.autoplayActivo || enFullscreen;
+    const compacto = enFullscreen && this.autoplayActivo;
     barra.innerHTML = `
       <div class="rp-controls">
-        <button class="icon-btn" id="btnLamPrev" style="flex:0;min-width:44px;" ${this.indiceActual === 0 ? 'disabled' : ''} title="Anterior"><i data-lucide="chevron-left" size="16"></i></button>
-        <button class="icon-btn" id="btnLamPlayPausa" style="flex:0;min-width:44px;" title="${this.pausado ? 'Reproducir' : 'Pausar'}"><i data-lucide="${this.pausado ? 'play' : 'pause'}" size="16"></i></button>
+        ${compacto ? '' : `<button class="icon-btn" id="btnLamPrev" style="flex:0;min-width:44px;" ${this.indiceActual === 0 ? 'disabled' : ''} title="Anterior"><i data-lucide="chevron-left" size="16"></i></button>
+        <button class="icon-btn" id="btnLamPlayPausa" style="flex:0;min-width:44px;" title="${this.pausado ? 'Reproducir' : 'Pausar'}"><i data-lucide="${this.pausado ? 'play' : 'pause'}" size="16"></i></button>`}
         <div class="rp-dwell-bar" style="flex:1;height:6px;border-radius:999px;overflow:hidden;background:var(--gray-200);">
           <div id="rpProgresoLamFill" style="height:100%;width:${this.pctBarraActual()}%;background:${this.colorAcento};"></div>
         </div>
-        <button class="btn-save" id="btnLamNext" ${puedeAvanzar ? '' : 'disabled'} style="${puedeAvanzar ? '' : 'opacity:.5;'}white-space:nowrap;">
+        ${compacto ? '' : `<button class="btn-save" id="btnLamNext" ${puedeAvanzar ? '' : 'disabled'} style="${puedeAvanzar ? '' : 'opacity:.5;'}white-space:nowrap;">
           ${esUltima ? 'Continuar' : 'Siguiente'} <i data-lucide="arrow-right" size="14"></i>
         </button>
         <button class="icon-btn" id="btnLamAuto" style="flex:0;min-width:44px;${this.autoplayActivo ? 'color:' + this.colorAcento + ';' : ''}" title="${this.autoplayActivo ? 'Automático (clic para Manual)' : 'Manual (clic para Automático)'}">
           <i data-lucide="${this.autoplayActivo ? 'zap' : 'hand'}" size="16"></i>
+        </button>`}
+        <button class="icon-btn" id="btnLamFullscreen" style="flex:0;min-width:44px;${fullscreenDisponible ? '' : 'opacity:.4;'}" ${fullscreenDisponible ? '' : 'disabled'}
+          title="${enFullscreen ? 'Salir de pantalla completa' : (fullscreenDisponible ? 'Pantalla completa' : 'Disponible solo con avance Automático')}">
+          <i data-lucide="${enFullscreen ? 'minimize' : 'maximize'}" size="16"></i>
         </button>
       </div>
-      <p style="font-size:.74rem;color:var(--gray-500);margin-top:10px;text-align:center;">Puedes retroceder o pausar, pero no adelantar: "Siguiente" se habilita al terminar el audio de esta diapositiva.</p>
+      ${compacto ? '' : `<p style="font-size:.74rem;color:var(--gray-500);margin-top:10px;text-align:center;">Puedes retroceder o pausar, pero no adelantar: "Siguiente" se habilita al terminar el audio de esta diapositiva.</p>`}
     `;
     lucide.createIcons();
     // Rebuild recrea el nodo del fill: si el audio sigue sonando hay que
     // relanzar la animación desde la posición real actual.
     if (!this.audio.paused && !this.audio.ended) this.animarBarraHaciaFinDeLamina();
-    document.getElementById('btnLamPrev').addEventListener('click', () => {
-      if (this.indiceActual > 0) this.mostrarLamina(this.indiceActual - 1, this.autoplayActivo);
-    });
-    document.getElementById('btnLamNext').addEventListener('click', () => {
-      if (esUltima) this.callbacks.onFinalizado();
-      else this.mostrarLamina(this.indiceActual + 1, this.autoplayActivo);
-    });
-    document.getElementById('btnLamPlayPausa').addEventListener('click', () => {
-      if (this.pausado) this.reproducir();
-      else this.pausar();
-    });
-    document.getElementById('btnLamAuto').addEventListener('click', () => {
-      this.autoplayActivo = !this.autoplayActivo;
-      this.guardarPreferenciaAutoplay(this.autoplayActivo);
-      this.actualizarBotonAuto();
-      // Si acaba de activar Automático con el audio ya terminado, avanza
-      // solo (si no, queda esperando un click extra que Manual sí pide).
-      if (this.autoplayActivo && this.audio.ended && this.indiceActual < this.laminas.length - 1 && this.audioListoIndiceActual) {
-        this.timeoutAutoAvance = setTimeout(() => this.mostrarLamina(this.indiceActual + 1, true), 400);
-      }
-    });
+    if (!compacto) {
+      document.getElementById('btnLamPrev').addEventListener('click', () => {
+        if (this.indiceActual > 0) this.mostrarLamina(this.indiceActual - 1, this.autoplayActivo);
+      });
+      document.getElementById('btnLamNext').addEventListener('click', () => {
+        if (esUltima) this.callbacks.onFinalizado();
+        else this.mostrarLamina(this.indiceActual + 1, this.autoplayActivo);
+      });
+      document.getElementById('btnLamPlayPausa').addEventListener('click', () => {
+        if (this.pausado) this.reproducir();
+        else this.pausar();
+      });
+      document.getElementById('btnLamAuto').addEventListener('click', () => {
+        this.autoplayActivo = !this.autoplayActivo;
+        this.guardarPreferenciaAutoplay(this.autoplayActivo);
+        // Si se apaga Automático en fullscreen, salir (mismo criterio que
+        // DriverIndexHtml: fullscreen solo tiene sentido con Automático).
+        if (!this.autoplayActivo && document.fullscreenElement) document.exitFullscreen().catch(() => {});
+        this.renderControles();
+        // Si acaba de activar Automático con el audio ya terminado, avanza
+        // solo (si no, queda esperando un click extra que Manual sí pide).
+        if (this.autoplayActivo && this.audio.ended && this.indiceActual < this.laminas.length - 1 && this.audioListoIndiceActual) {
+          this.timeoutAutoAvance = setTimeout(() => this.mostrarLamina(this.indiceActual + 1, true), 400);
+        }
+      });
+    }
+    // Fullscreen real sobre toda la vista (#viewReproductor) — el botón de
+    // salir del LMS sigue visible en pantalla completa.
+    const btnFs = document.getElementById('btnLamFullscreen');
+    if (fullscreenDisponible) {
+      btnFs.addEventListener('click', () => {
+        const vista = document.getElementById('viewReproductor');
+        if (document.fullscreenElement) {
+          document.exitFullscreen().catch(() => {});
+        } else {
+          vista.requestFullscreen().catch(() => {}).then(() => {
+            if (screen.orientation && screen.orientation.lock) {
+              screen.orientation.lock('landscape').catch(() => {});
+            }
+          });
+        }
+      });
+    }
+    if (!this.handlerFullscreenChange) {
+      this.handlerFullscreenChange = () => {
+        this.renderControles();
+        if (document.fullscreenElement) this.mostrarAvisoFullscreen();
+        else if (screen.orientation && screen.orientation.unlock) screen.orientation.unlock();
+      };
+      document.addEventListener('fullscreenchange', this.handlerFullscreenChange);
+    }
+  }
+
+  mostrarAvisoFullscreen() {
+    const aviso = document.getElementById('rpAvisoFullscreen');
+    if (!aviso) return;
+    aviso.textContent = 'Para salir: presiona de nuevo el botón de pantalla completa o usa Atrás';
+    aviso.classList.add('show');
+    clearTimeout(this.timeoutAvisoFullscreen);
+    this.timeoutAvisoFullscreen = setTimeout(() => aviso.classList.remove('show'), 3500);
   }
 
   destruir() {
     clearTimeout(this.timeoutAutoAvance);
+    clearTimeout(this.timeoutAvisoFullscreen);
+    if (this.handlerFullscreenChange) {
+      document.removeEventListener('fullscreenchange', this.handlerFullscreenChange);
+      this.handlerFullscreenChange = null;
+    }
+    if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
     if (this.audio) {
       this.audio.pause();
       if (this.onPlayingBound) this.audio.removeEventListener('playing', this.onPlayingBound);
