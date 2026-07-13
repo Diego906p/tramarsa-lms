@@ -365,6 +365,12 @@ ${cssModulo}
     } else {
       this.pausado = true;
     }
+    // Última lámina terminada en modo inmersivo táctil: ahí no hay botón
+    // "Continuar" visible — se sale de fullscreen automáticamente para que
+    // el usuario vea los controles y pueda pasar a la evaluación.
+    if (esUltima && document.fullscreenElement && window.matchMedia('(pointer: coarse)').matches) {
+      document.exitFullscreen().catch(() => {});
+    }
     this.renderControles();
   }
 
@@ -398,6 +404,22 @@ ${cssModulo}
     // solo barra + botón de salir (modo compacto).
     const fullscreenDisponible = this.autoplayActivo || enFullscreen;
     const compacto = enFullscreen && this.autoplayActivo;
+    // INMERSIVO (táctil, celular/tablet): en fullscreen no se muestra NADA
+    // salvo la presentación — ni barra de progreso ni controles. Solo una X
+    // flotante que SALE de pantalla completa (no cierra el módulo ni toca
+    // el progreso; el CSS @media pointer:coarse oculta además el header).
+    if (enFullscreen && window.matchMedia('(pointer: coarse)').matches) {
+      barra.innerHTML = `
+        <button id="btnLamSalirFs" title="Salir de pantalla completa"
+          style="position:fixed;top:calc(10px + env(safe-area-inset-top));right:calc(10px + env(safe-area-inset-right));width:42px;height:42px;border-radius:50%;border:none;background:rgba(0,0,0,.45);color:#fff;display:flex;align-items:center;justify-content:center;z-index:60;cursor:pointer;">
+          <i data-lucide="x" size="20"></i>
+        </button>`;
+      lucide.createIcons();
+      document.getElementById('btnLamSalirFs').addEventListener('click', () => {
+        document.exitFullscreen().catch(() => {});
+      });
+      return;
+    }
     barra.innerHTML = `
       <div class="rp-controls">
         ${compacto ? '' : `<button class="icon-btn" id="btnLamPrev" style="flex:0;min-width:44px;" ${this.indiceActual === 0 ? 'disabled' : ''} title="Anterior"><i data-lucide="chevron-left" size="16"></i></button>
@@ -787,6 +809,28 @@ export class DriverIndexHtml {
     // progreso — casi toda la superficie para el contenido del módulo.
     const fullscreenDisponible = this.autoplayActivo || enFullscreen;
     const compacto = enFullscreen && this.autoplayActivo;
+    // INMERSIVO táctil: igual que en DriverLaminas — solo la presentación
+    // y una X flotante que sale de fullscreen (no cierra el módulo).
+    if (enFullscreen && window.matchMedia('(pointer: coarse)').matches) {
+      barra.innerHTML = `
+        <button id="btnIndexHtmlSalirFs" title="Salir de pantalla completa"
+          style="position:fixed;top:calc(10px + env(safe-area-inset-top));right:calc(10px + env(safe-area-inset-right));width:42px;height:42px;border-radius:50%;border:none;background:rgba(0,0,0,.45);color:#fff;display:flex;align-items:center;justify-content:center;z-index:60;cursor:pointer;">
+          <i data-lucide="x" size="20"></i>
+        </button>`;
+      lucide.createIcons();
+      document.getElementById('btnIndexHtmlSalirFs').addEventListener('click', () => {
+        document.exitFullscreen().catch(() => {});
+      });
+      if (!this.handlerFullscreenChange) {
+        this.handlerFullscreenChange = () => {
+          this.renderControles();
+          if (document.fullscreenElement) this.mostrarAvisoFullscreen();
+          else if (screen.orientation && screen.orientation.unlock) screen.orientation.unlock();
+        };
+        document.addEventListener('fullscreenchange', this.handlerFullscreenChange);
+      }
+      return;
+    }
     barra.innerHTML = `
       <div class="rp-controls">
         ${compacto ? '' : `<button class="icon-btn" id="btnIndexHtmlPrev" style="flex:0;min-width:44px;" ${this.indiceActual === 0 ? 'disabled' : ''} title="Anterior"><i data-lucide="chevron-left" size="16"></i></button>

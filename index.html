@@ -311,6 +311,17 @@ tr:last-child td { border-bottom:none; }
 #viewReproductor:fullscreen #reproductorBody { padding:8px; }
 #viewReproductor:fullscreen #rpControlsBarIndexHtml p { display:none; } /* texto de ayuda: no esencial una vez ya se usó el control */
 #viewReproductor:fullscreen .rp-controls { gap:6px; margin-top:0; }
+/* Fullscreen INMERSIVO en dispositivos táctiles (celular/tablet):
+   solo la presentación expandida a toda la pantalla — sin header, sin
+   barra de progreso, sin controles; únicamente la X flotante que
+   dibujan los drivers para SALIR de pantalla completa (no cierra el
+   módulo ni pierde progreso). En desktop no aplica (pointer fino). */
+@media (pointer: coarse) {
+  #viewReproductor:fullscreen { padding-bottom:0 !important; }
+  #viewReproductor:fullscreen header { display:none !important; }
+  #viewReproductor:fullscreen .rp-full { padding:0 !important; }
+  #viewReproductor:fullscreen #reproductorBody { padding:0 !important; }
+}
 @media (max-height: 480px) {
   /* Landscape en teléfono: la altura ya es escasa por sí sola. El botón
      de salir (X) se mantiene siempre visible — nunca depender solo del

@@ -21,7 +21,7 @@ Navegador (cliente)
 - **Autenticación:** Firebase Authentication — el trabajador ingresa con DNI, la app resuelve el DNI a su correo real internamente.
 - **Base de datos:** Cloud Firestore como única fuente de verdad de negocio.
 - **Archivos:** paquetes de módulo (`.zip`/`.rar`) y certificados (`.pdf`) se almacenan en un repositorio de GitHub dedicado, subidos automáticamente desde el panel de administración.
-- **Reproductor de contenido:** arquitectura universal — cualquier módulo con un `index.html` en su raíz se ejecuta dentro de un `<iframe>` aislado (sandbox, origen opaco) y se comunica con el LMS mediante un contrato `postMessage` documentado. El LMS nunca inspecciona la estructura interna del módulo.
+- **Reproductor de contenido:** formato declarativo v2 — el módulo es solo contenido (imágenes o láminas HTML + audios + `manifest.json`), sin lógica propia; el LMS dirige toda la reproducción (audio, navegación, progreso, evaluación). Los paquetes del formato anterior (`index.html` + contrato `postMessage` en iframe aislado) siguen soportados como legacy.
 - **Responsive:** toda la interfaz (login, ambos paneles, modales, reproductor) está adaptada a móvil/tablet/desktop (breakpoint principal 880px) — ver sección 31 de la documentación técnica.
 
 Detalle completo de cada pieza (modelo de datos, protocolo SDK, decisiones de arquitectura, limitaciones conocidas) en la documentación técnica enlazada arriba.
@@ -74,11 +74,11 @@ js/
   db-firestore.js          Capa de acceso a datos (CRUD Firestore)
   app.js                   Lógica de negocio + UI (login, ambos paneles)
   reproductor.js           Motor de reproducción de módulos, evaluación, certificados
-  modulo-loader/           Driver + resolver + adaptadores del reproductor universal
+  modulo-loader/           Drivers (formato v2 declarativo + v1 legacy), resolver y adaptadores de paquete
   vendor/libarchive/       WASM para leer archivos .rar en el navegador
 ```
 
-Ver la documentación técnica completa para el detalle de cada archivo, el modelo de datos, el protocolo SDK del reproductor, y el formato oficial para crear nuevos módulos de capacitación.
+Ver la documentación técnica completa para el detalle de cada archivo, el modelo de datos, los formatos de módulo (v2 declarativo oficial y v1 legacy) y cómo crear nuevos módulos de capacitación.
 
 ---
 
