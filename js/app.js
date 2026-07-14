@@ -2033,8 +2033,11 @@ document.getElementById('btnCancelarImportar').addEventListener('click', () => {
 
 const fileDropExcel = document.getElementById('fileDropExcel');
 const fExcel = document.getElementById('fExcel');
-fileDropExcel.addEventListener('click', () => fExcel.click());
-fExcel.addEventListener('change', () => {
+// Bug real corregido: este file-drop solo tenía click() para abrir el
+// selector, nunca dragover/drop — a diferencia de los otros file-drop del
+// panel (Miniatura/Preguntas/Certificado, ver wireFileDrop) no aceptaba
+// arrastrar el archivo, solo hacer clic y elegirlo manualmente.
+wireFileDrop(fileDropExcel, fExcel, () => {
   const f = fExcel.files[0];
   document.getElementById('nombreExcel').textContent = f ? `Seleccionado: ${f.name}` : '';
 });
@@ -2121,25 +2124,62 @@ document.getElementById('btnProcesarImportar').addEventListener('click', () => {
 // ---------------------------------------------------------------
 // Exportar base de datos de trabajadores a Excel
 // ---------------------------------------------------------------
+// Separa un ISO en fecha (aaaa-mm-dd) y hora (HH:MM) como texto plano —
+// antes se exportaba el ISO completo en una sola celda ("Inicio"/"Fin") y
+// Excel lo reinterpretaba con su propio formato de fecha/hora regional,
+// mostrando valores irreconocibles. Con fecha y hora en columnas de texto
+// separadas, cada una tiene su propio formato simple y no se corrompe.
+function fechaYHora(iso) {
+  if (!iso) return { fecha: '', hora: '' };
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return { fecha: '', hora: '' };
+  const fecha = d.toISOString().slice(0, 10);
+  const hora = String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0');
+  return { fecha, hora };
+}
+const ETIQUETA_ESTADO_MODULO = { COMPLETADO: 'Completado', EN_PROGRESO: 'En progreso', PENDIENTE: 'Pendiente' };
+
 async function exportarUsuariosExcel() {
   await conFeedback('Generando archivo Excel...', async () => {
     const datos = await datosProgresoTrabajadores();
 
-    const filas = datos.map(({ usuario: u, estadoGlobal, puntajeProm, inicio, fin }) => ({
-      'Nombres': [u.primerNombre, u.segundoNombre].filter(Boolean).join(' '),
-      'Apellidos': [u.apellidoPaterno, u.apellidoMaterno].filter(Boolean).join(' '),
-      'DNI': u.dni,
-      'Correo': u.correo,
-      'Empresa': u.empresa || '',
-      'Sede': u.sede || '',
-      'Gerencia': u.gerencia || '',
-      'Rol': u.rol,
-      'Estado cuenta': u.estado,
-      'Estado módulos': ETIQUETA_ESTADO_GLOBAL[estadoGlobal].texto,
-      'Puntaje promedio': puntajeProm ?? '',
-      'Inicio': inicio || '',
-      'Fin': fin || ''
-    }));
+    // Una fila por módulo asignado (no una fila resumen por usuario): un
+    // trabajador con varios módulos aparece varias veces, una por módulo,
+    // con sus propios datos de progreso/puntaje/fechas/certificado.
+    const filas = [];
+    for (const { usuario: u, filas: asignados } of datos) {
+      const base = {
+        'Nombres': [u.primerNombre, u.segundoNombre].filter(Boolean).join(' '),
+        'Apellidos': [u.apellidoPaterno, u.apellidoMaterno].filter(Boolean).join(' '),
+        'DNI': u.dni,
+        'Correo': u.correo,
+        'Empresa': u.empresa || '',
+        'Sede': u.sede || '',
+        'Gerencia': u.gerencia || '',
+        'Rol': u.rol,
+        'Estado cuenta': u.estado
+      };
+      if (!asignados.length) {
+        filas.push({ ...base, 'Módulo': '', 'Categoría': '', 'Estado módulo': '', 'Progreso': '', 'Puntaje': '', 'Fecha inicio': '', 'Hora inicio': '', 'Fecha fin': '', 'Hora fin': '', 'Certificado': '' });
+        continue;
+      }
+      for (const { modulo: m, hist, estado, puntaje } of asignados) {
+        const inicio = fechaYHora(hist && hist.fechaInicio);
+        const fin = fechaYHora(hist && hist.fechaFin);
+        const certificado = !m.certificadoUrl ? 'No habilitado' : (estado === 'COMPLETADO' ? 'Generado' : '');
+        filas.push({
+          ...base,
+          'Módulo': m.nombre,
+          'Categoría': m.categoria || '',
+          'Estado módulo': ETIQUETA_ESTADO_MODULO[estado] || '',
+          'Progreso': estado === 'PENDIENTE' ? 0 : (hist && hist.avancePct != null ? hist.avancePct : 0),
+          'Puntaje': puntaje ?? '',
+          'Fecha inicio': inicio.fecha, 'Hora inicio': inicio.hora,
+          'Fecha fin': fin.fecha, 'Hora fin': fin.hora,
+          'Certificado': certificado
+        });
+      }
+    }
 
     const ws = XLSX.utils.json_to_sheet(filas);
     const wb = XLSX.utils.book_new();
