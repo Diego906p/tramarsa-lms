@@ -12,16 +12,25 @@
 import { auth, firebaseEstaConfigurado } from './firebase-config.js';
 import {
   signInWithEmailAndPassword, signOut, createUserWithEmailAndPassword, onAuthStateChanged,
-  updatePassword, reauthenticateWithCredential, EmailAuthProvider, sendPasswordResetEmail
+  updatePassword, reauthenticateWithCredential, EmailAuthProvider
 } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js';
 import * as DB from './db-firestore.js';
 import { crearCuentaAuthParaUsuario } from './firebase-secondary.js';
-import { subirArchivosAGithub } from './github-storage.js';
-import { archivoAJSZip, carpetaArrastradaAJSZip, jszipAArchivoZip } from './modulo-loader/package-adapters.js';
+import { subirArchivosAGithub, subirArchivoAGithub, eliminarArchivoPrivado } from './github-storage.js';
+import { resolverCorreoParaLogin, solicitarRecuperacionPorDni, sincronizarAccesoDni, eliminarAccesoDni } from './auth-gateway.js';
+import { archivoAJSZip, carpetaArrastradaAJSZip, jszipAArchivoZip, validarPaqueteModulo } from './modulo-loader/package-adapters.js';
 import { descargarCertificadoAdmin } from './reproductor.js';
+
+const CORREO_ADMINISTRADOR_BOOTSTRAP = 'diego906p@gmail.com';
 
 export function nombreCompleto(u) {
   return [u.primerNombre, u.segundoNombre, u.apellidoPaterno, u.apellidoMaterno].filter(Boolean).join(' ');
+}
+
+export function escaparHtml(valor) {
+  return String(valor ?? '').replace(/[&<>"']/g, caracter => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+  })[caracter]);
 }
 
 // ---------------------------------------------------------------
@@ -48,7 +57,12 @@ export function toast(tipo, mensaje, duracionMs = 4000) {
   const icono = tipo === 'exito' ? 'check-circle-2' : tipo === 'error' ? 'alert-triangle' : 'info';
   const el = document.createElement('div');
   el.className = `toast ${tipo}`;
-  el.innerHTML = `<i data-lucide="${icono}" size="18"></i><span>${mensaje}</span>`;
+  const icon = document.createElement('i');
+  icon.dataset.lucide = icono;
+  icon.setAttribute('size', '18');
+  const texto = document.createElement('span');
+  texto.textContent = mensaje;
+  el.append(icon, texto);
   cont.appendChild(el);
   lucide.createIcons();
   setTimeout(() => el.remove(), duracionMs);
@@ -336,16 +350,20 @@ document.getElementById('togglePass').addEventListener('click', () => {
 
 document.getElementById('loginForm').addEventListener('submit', async (e) => {
   e.preventDefault();
-  const dni = document.getElementById('loginDni').value.trim();
+  const identificador = document.getElementById('loginDni').value.trim();
   const password = document.getElementById('loginPassword').value;
   const errorBox = document.getElementById('errorMsg');
   const errorText = document.getElementById('errorText');
   errorBox.classList.remove('show');
 
   try {
-    const usuario = await DB.obtenerUsuario(dni);
-    if (!usuario || !usuario.correo) throw { code: 'auth/user-not-found' };
-    await signInWithEmailAndPassword(auth, usuario.correo, password);
+    const correo = await resolverCorreoParaLogin(identificador, password);
+    const credencial = await signInWithEmailAndPassword(auth, correo, password);
+    const usuario = await DB.obtenerUsuarioPorUid(credencial.user.uid);
+    if (!usuario) {
+      await signOut(auth);
+      throw { code: 'auth/user-not-found' };
+    }
     if (usuario.estado !== 'ACTIVO') {
       await signOut(auth);
       errorText.textContent = 'Tu cuenta está inactiva. Contacta al administrador.';
@@ -430,8 +448,9 @@ document.getElementById('formCambioObligatorio').addEventListener('submit', asyn
   if (nueva !== confirmar) { errorBox.textContent = 'Las contraseñas no coinciden.'; errorBox.classList.add('show'); return; }
 
   try {
-    const credencial = EmailAuthProvider.credential(usuario.correo, usuario.dni);
-    await reauthenticateWithCredential(auth.currentUser, credencial);
+    // El usuario acaba de iniciar sesión: Firebase considera esa sesión
+    // reciente. Reautenticar con el DNI aquí era frágil si la cuenta ya
+    // había cambiado la clave, pero Firestore aún conservaba la marca.
     await updatePassword(auth.currentUser, nueva);
     await DB.actualizarUsuario(usuario.dni, { debeCambiarPassword: false });
     usuario.debeCambiarPassword = false;
@@ -439,10 +458,19 @@ document.getElementById('formCambioObligatorio').addEventListener('submit', asyn
     document.getElementById('modalCambioObligatorioOverlay').classList.remove('show');
   } catch (err) {
     console.error('Cambio de contraseña obligatorio:', err);
-    errorBox.textContent = 'No se pudo actualizar la contraseña. Intenta de nuevo.';
+    if (err.code === 'auth/requires-recent-login') {
+      errorBox.textContent = 'Tu sesión expiró. Cierra sesión, vuelve a ingresar y actualiza la contraseña de inmediato.';
+    } else if (err.code === 'auth/weak-password') {
+      errorBox.textContent = 'La contraseña debe tener al menos 6 caracteres.';
+    } else if (err.code === 'permission-denied') {
+      errorBox.textContent = 'No se pudo registrar el cambio. Intenta nuevamente en unos segundos.';
+    } else {
+      errorBox.textContent = 'No se pudo actualizar la contraseña. Intenta de nuevo.';
+    }
     errorBox.classList.add('show');
   }
 });
+document.getElementById('btnCerrarSesionCambioObligatorio').addEventListener('click', cerrarSesion);
 
 // ---------------------------------------------------------------
 // Recuperar contraseña: enlace nativo de Firebase Auth al correo real
@@ -450,9 +478,12 @@ document.getElementById('formCambioObligatorio').addEventListener('submit', asyn
 // plano por ningún medio).
 // ---------------------------------------------------------------
 document.getElementById('btnOlvidoPassword').addEventListener('click', () => {
-  document.getElementById('rDni').value = '';
+  const dniInput = document.getElementById('rDni');
+  dniInput.value = '';
+  dniInput.disabled = false;
   document.getElementById('formErrorRecuperar').classList.remove('show');
   document.getElementById('formSuccessRecuperar').classList.remove('show');
+  document.getElementById('btnEnviarRecuperar').style.display = '';
   document.getElementById('modalRecuperarOverlay').classList.add('show');
 });
 document.getElementById('btnCancelarRecuperar').addEventListener('click', () => document.getElementById('modalRecuperarOverlay').classList.remove('show'));
@@ -464,12 +495,11 @@ document.getElementById('btnEnviarRecuperar').addEventListener('click', async ()
   errorBox.classList.remove('show'); successBox.classList.remove('show');
 
   try {
-    const usuario = await DB.obtenerUsuario(dni);
-    if (!usuario) { errorBox.textContent = 'No se encontró un usuario con ese DNI.'; errorBox.classList.add('show'); return; }
-    if (!usuario.correo) { errorBox.textContent = 'Este usuario no tiene un correo registrado.'; errorBox.classList.add('show'); return; }
-    await sendPasswordResetEmail(auth, usuario.correo);
-    successBox.textContent = `Se envió un enlace para restablecer tu contraseña a ${usuario.correo}.`;
+    await solicitarRecuperacionPorDni(dni);
+    successBox.textContent = 'Si existe una cuenta con ese DNI, recibirás un enlace en el correo registrado.';
     successBox.classList.add('show');
+    document.getElementById('rDni').disabled = true;
+    document.getElementById('btnEnviarRecuperar').style.display = 'none';
   } catch (err) {
     console.error('Restablecer contraseña:', err);
     errorBox.textContent = 'No se pudo enviar el enlace. Intenta más tarde o contacta al administrador.';
@@ -480,7 +510,7 @@ document.getElementById('btnEnviarRecuperar').addEventListener('click', async ()
 function logoDeSidebar() {
   return `
     <div class="logo">
-      <div class="flag-icon"><img src="https://raw.githubusercontent.com/Diego906p/imagenes/refs/heads/main/images/logo_tram_white.png" alt="Grupo Tramarsa"></div>
+      <div class="flag-icon"><img src="assets/logo_tram_white.png" alt="Grupo Tramarsa"></div>
     </div>`;
 }
 
@@ -847,7 +877,7 @@ function renderPerfilTrabajador() {
       <div style="display:flex;align-items:center;gap:16px;">
         <div class="avatar" id="perfilAvatarPreview" style="width:64px;height:64px;font-size:1.2rem;${usuario.fotoUrl ? `background-image:url('${usuario.fotoUrl}');background-size:cover;` : ''}">${usuario.fotoUrl ? '' : (usuario.primerNombre[0] + usuario.apellidoPaterno[0]).toUpperCase()}</div>
         <label class="btn-outline" style="cursor:pointer;">
-          <input type="file" id="fFotoPerfil" accept="image/*" style="display:none;">
+          <input type="file" id="fFotoPerfil" accept="image/jpeg,image/jpg,image/png" style="display:none;">
           Cambiar foto
         </label>
         ${usuario.fotoUrl ? `<button type="button" class="btn-cancel" id="btnEliminarFotoPerfil">Eliminar</button>` : ''}
@@ -867,17 +897,34 @@ function renderPerfilTrabajador() {
   `;
   lucide.createIcons();
 
-  document.getElementById('fFotoPerfil').addEventListener('change', (e) => {
+  document.getElementById('fFotoPerfil').addEventListener('change', async (e) => {
     const f = e.target.files[0];
     if (!f) return;
-    const reader = new FileReader();
-    reader.onload = async () => {
-      await DB.actualizarUsuario(usuario.dni, { fotoUrl: reader.result });
-      usuario.fotoUrl = reader.result;
+    // Antes se guardaba la foto como data URL directo en el documento del
+    // usuario — Firestore tiene un tope duro de 1MB por documento completo,
+    // así que una foto de celular normal (varios MB) fallaba sin aviso
+    // claro. Ahora se sube a GitHub (mismo patrón que módulos/certificados)
+    // y solo se guarda la URL — permite fotos de hasta 5MB reales.
+    const TIPOS_PERMITIDOS = ['image/jpeg', 'image/jpg', 'image/png'];
+    const PESO_MAXIMO = 5 * 1024 * 1024;
+    if (!TIPOS_PERMITIDOS.includes(f.type)) {
+      toast('error', 'Formato no permitido. Usa JPG, JPEG o PNG.');
+      e.target.value = '';
+      return;
+    }
+    if (f.size > PESO_MAXIMO) {
+      toast('error', 'La foto pesa más de 5MB. Elige una imagen más liviana.');
+      e.target.value = '';
+      return;
+    }
+    await conFeedback('Subiendo foto...', async () => {
+      const { url } = await subirArchivoAGithub(f, `fotos/${usuario.dni}`, `Foto de perfil: ${usuario.dni}`, { tipo: 'foto' });
+      await DB.actualizarUsuario(usuario.dni, { fotoUrl: url });
+      usuario.fotoUrl = url;
       setSesion(usuario);
       renderPerfilTrabajador();
-    };
-    reader.readAsDataURL(f);
+    }, { exito: 'Foto actualizada.', error: 'No se pudo subir la foto.' });
+    e.target.value = '';
   });
 
   const btnEliminarFoto = document.getElementById('btnEliminarFotoPerfil');
@@ -1036,26 +1083,27 @@ async function renderCapacitaciones(pagina) {
 
     grid.innerHTML = pagina_.map(m => {
       const totalHabilitados = asignaciones.filter(a => a.moduloId === m.id && a.habilitado).length;
+      const nombreArgumento = encodeURIComponent(m.nombre || '').replace(/'/g, '%27');
       return `
       <div class="modulo-card">
         ${coverModulo(m)}
         <div class="modulo-body">
           <div style="display:flex;align-items:center;gap:10px;">
             ${chipModulo(m)}
-            <h3 style="margin:0;flex:1;">${m.numeroModulo ? `M${m.numeroModulo} · ` : ''}${m.nombre}</h3>
+            <h3 style="margin:0;flex:1;">${m.numeroModulo ? `M${m.numeroModulo} · ` : ''}${escaparHtml(m.nombre)}</h3>
             <span class="badge-mini ${m.estado==='ACTIVO'?'activo':'inactivo'}">${m.estado==='ACTIVO'?'Activo':'Inactivo'}</span>
           </div>
-          <p>${m.descripcion || 'Sin descripción'}</p>
-          <div class="modulo-meta"><i data-lucide="file-archive" size="13"></i> ${m.archivoNombre || 'Sin archivo'}</div>
+          <p>${escaparHtml(m.descripcion || 'Sin descripción')}</p>
+          <div class="modulo-meta"><i data-lucide="file-archive" size="13"></i> ${escaparHtml(m.archivoNombre || 'Sin archivo')}</div>
           <div class="modulo-meta"><i data-lucide="list-checks" size="13"></i> ${m.preguntas && m.preguntas.length ? m.preguntas.length + ' pregunta(s)' : 'Sin preguntas'}</div>
-          <div class="modulo-meta"><i data-lucide="award" size="13"></i> ${m.certificadoNombre || 'Sin certificado'}</div>
+          <div class="modulo-meta"><i data-lucide="award" size="13"></i> ${escaparHtml(m.certificadoNombre || 'Sin certificado')}</div>
           <div class="modulo-meta"><i data-lucide="users" size="13"></i> ${totalHabilitados} trabajador(es) habilitado(s)</div>
         </div>
         <div class="modulo-actions">
           <button class="icon-btn" onclick="abrirModalModulo('${m.id}')"><i data-lucide="pencil" size="13"></i> Editar</button>
-          <button class="icon-btn primary-outline" onclick="abrirModalGrupo('${m.id}','${m.nombre.replace(/'/g,"\\'")}')"><i data-lucide="users-round" size="13"></i> Asignar</button>
+          <button class="icon-btn primary-outline" onclick="abrirModalGrupo('${m.id}','${nombreArgumento}')"><i data-lucide="users-round" size="13"></i> Asignar</button>
           <button class="icon-btn" onclick="toggleEstadoModulo('${m.id}')"><i data-lucide="power" size="13"></i> ${m.estado==='ACTIVO'?'Inactivar':'Activar'}</button>
-          <button class="icon-btn danger" onclick="eliminarModulo('${m.id}','${m.nombre.replace(/'/g,"\\'")}')"><i data-lucide="trash-2" size="13"></i> Eliminar</button>
+          <button class="icon-btn danger" onclick="eliminarModulo('${m.id}','${nombreArgumento}')"><i data-lucide="trash-2" size="13"></i> Eliminar</button>
         </div>
       </div>
     `;
@@ -1070,7 +1118,15 @@ async function toggleEstadoModulo(id) {
   renderCapacitaciones();
 }
 async function eliminarModulo(id, nombre) {
-  if (!confirm(`¿Eliminar el módulo "${nombre}"? Esta acción no se puede deshacer. (Los archivos ya subidos a GitHub deben borrarse manualmente en el repositorio si ya no se necesitan).`)) return;
+  nombre = decodeURIComponent(nombre);
+  if (!confirm(`¿Eliminar el módulo "${nombre}"? Esta acción no se puede deshacer.`)) return;
+  const modulo = await DB.obtenerModulo(id);
+  if (modulo) {
+    await Promise.all([
+      eliminarArchivoPrivado(modulo.archivoUrl, { moduloId: id, tipo: 'archivo' }),
+      eliminarArchivoPrivado(modulo.certificadoUrl, { moduloId: id, tipo: 'certificado' })
+    ]);
+  }
   await DB.eliminarModulo(id);
   renderCapacitaciones();
 }
@@ -1393,6 +1449,7 @@ formModulo.addEventListener('submit', async (e) => {
   mostrarCargando('Guardando módulo...');
   try {
     const id = idExistente || ('mod-' + Date.now());
+    const moduloAnterior = idExistente ? await DB.obtenerModulo(idExistente) : null;
     const icono = document.getElementById('fIcono').value;
     const color = document.getElementById('fColor').value;
     const datos = { nombre, descripcion, categoria, icono, color };
@@ -1417,6 +1474,10 @@ formModulo.addEventListener('submit', async (e) => {
       const zip = await archivoAJSZip(archivo);
       archivo = await jszipAArchivoZip(zip, archivo.name.replace(/\.rar$/i, ''));
     }
+    if (archivo) {
+      actualizarCargando('Validando estructura del módulo...');
+      await validarPaqueteModulo(await archivoAJSZip(archivo));
+    }
 
     // Fijo para siempre al crear: nunca se reescribe al editar el módulo
     // ni se recalcula (borrar otro módulo no corre este número).
@@ -1426,8 +1487,8 @@ formModulo.addEventListener('submit', async (e) => {
     // dos commits seguidos chocaban con la propagación de la API de
     // referencias de GitHub (ver github-storage.js).
     const entradas = [];
-    if (archivo) entradas.push({ file: archivo, carpeta: `modulos/${id}`, tipo: 'archivo' });
-    if (archivoCertificado) entradas.push({ file: archivoCertificado, carpeta: `certificados/${id}`, tipo: 'certificado' });
+    if (archivo) entradas.push({ file: archivo, carpeta: `modulos/${id}`, tipo: 'archivo', moduloId: id });
+    if (archivoCertificado) entradas.push({ file: archivoCertificado, carpeta: `certificados/${id}`, tipo: 'certificado', moduloId: id });
 
     if (entradas.length) {
       actualizarCargando('Subiendo archivos a GitHub...');
@@ -1463,6 +1524,19 @@ formModulo.addEventListener('submit', async (e) => {
       await DB.crearModulo(id, { ...datos, estado: 'ACTIVO', fechaCreacion: new Date().toISOString() });
     }
 
+    // El gateway administra los binarios privados: una vez que Firestore
+    // apunta a la nueva versión, limpia las rutas reemplazadas.
+    if (moduloAnterior) {
+      const eliminaciones = [];
+      if (datos.archivoUrl && datos.archivoUrl !== moduloAnterior.archivoUrl) {
+        eliminaciones.push(eliminarArchivoPrivado(moduloAnterior.archivoUrl, { moduloId: id, tipo: 'archivo' }));
+      }
+      if ((datos.certificadoUrl === null || (datos.certificadoUrl && datos.certificadoUrl !== moduloAnterior.certificadoUrl)) && moduloAnterior.certificadoUrl) {
+        eliminaciones.push(eliminarArchivoPrivado(moduloAnterior.certificadoUrl, { moduloId: id, tipo: 'certificado' }));
+      }
+      await Promise.all(eliminaciones);
+    }
+
     ocultarCargando();
     toast('exito', `Módulo "${nombre}" guardado correctamente.`);
     modalOverlay.classList.remove('show');
@@ -1484,6 +1558,7 @@ formModulo.addEventListener('submit', async (e) => {
 // ---------------------------------------------------------------
 let grupoModuloId = null;
 async function abrirModalGrupo(moduloId, nombreModulo) {
+  nombreModulo = decodeURIComponent(nombreModulo);
   grupoModuloId = moduloId;
   document.getElementById('grupoSubtitulo').textContent = `Módulo: ${nombreModulo}`;
   document.getElementById('formErrorGrupo').classList.remove('show');
@@ -1817,6 +1892,7 @@ async function eliminarUsuario(id, nombre) {
   if (!confirm(`¿Eliminar a ${nombre}? Se borran sus asignaciones e historial. Esta acción no se puede deshacer.\n\nNota: la cuenta de acceso (Firebase Auth) de esta persona no se elimina automáticamente — requiere Admin SDK, fuera de alcance de esta versión.`)) return;
   await conFeedback('Eliminando trabajador...', async () => {
     await DB.eliminarUsuario(id);
+    await eliminarAccesoDni(id).catch(error => console.warn('No se pudo limpiar el acceso por DNI:', error));
     renderUsuarios();
   }, { exito: `${nombre} eliminado correctamente.`, error: 'No se pudo eliminar el trabajador.' });
 }
@@ -1824,17 +1900,19 @@ async function eliminarUsuario(id, nombre) {
 // Modal nuevo/editar trabajador
 const modalUsuarioOverlay = document.getElementById('modalUsuarioOverlay');
 function abrirModalUsuario() {
-  document.getElementById('modalUsuarioTitulo').textContent = 'Nuevo trabajador';
+  document.getElementById('modalUsuarioTitulo').textContent = 'Nuevo usuario';
   document.getElementById('formUsuario').reset();
   document.getElementById('uId').value = '';
   document.getElementById('uDni').disabled = false;
   document.getElementById('grupoUPassword').style.display = '';
+  document.getElementById('uRol').disabled = false;
+  document.getElementById('uRol').value = 'TRABAJADOR';
   document.getElementById('formErrorUsuario').classList.remove('show');
   modalUsuarioOverlay.classList.add('show');
 }
 async function editarUsuario(id) {
   const u = await DB.obtenerUsuario(id);
-  document.getElementById('modalUsuarioTitulo').textContent = 'Editar trabajador';
+  document.getElementById('modalUsuarioTitulo').textContent = 'Editar usuario';
   document.getElementById('uId').value = u.id;
   document.getElementById('uPrimerNombre').value = u.primerNombre;
   document.getElementById('uSegundoNombre').value = u.segundoNombre || '';
@@ -1850,6 +1928,8 @@ async function editarUsuario(id) {
   document.getElementById('uPassword').value = '';
   document.getElementById('uPassword').placeholder = 'Dejar en blanco para no cambiarla';
   document.getElementById('uCorreo').value = u.correo;
+  document.getElementById('uRol').value = u.rol || 'TRABAJADOR';
+  document.getElementById('uRol').disabled = true;
   document.getElementById('uEmpresa').value = u.empresa || '';
   document.getElementById('uSede').value = u.sede || '';
   document.getElementById('uGerencia').value = u.gerencia || '';
@@ -1867,6 +1947,7 @@ document.getElementById('formUsuario').addEventListener('submit', async (e) => {
   const apellidoMaterno = document.getElementById('uApellidoMaterno').value.trim();
   const dni = document.getElementById('uDni').value.trim();
   let password = document.getElementById('uPassword').value.trim();
+  const rol = document.getElementById('uRol').value;
   const correo = document.getElementById('uCorreo').value.trim().toLowerCase();
   const empresa = document.getElementById('uEmpresa').value.trim();
   const sede = document.getElementById('uSede').value.trim();
@@ -1879,6 +1960,7 @@ document.getElementById('formUsuario').addEventListener('submit', async (e) => {
   mostrarCargando(idExistente ? 'Guardando cambios...' : 'Creando cuenta del trabajador...');
 
   try {
+    let avisoIndiceDni = '';
     if (!idExistente) {
       const yaExiste = await DB.obtenerUsuario(dni);
       if (yaExiste) {
@@ -1887,21 +1969,29 @@ document.getElementById('formUsuario').addEventListener('submit', async (e) => {
       }
       if (!password) password = dni;
 
-      await crearCuentaAuthParaUsuario(correo, password);
+      const uid = await crearCuentaAuthParaUsuario(correo, password);
       await DB.crearUsuario(dni, {
         primerNombre, segundoNombre, apellidoPaterno, apellidoMaterno, correo, empresa, sede, gerencia,
-        rol: 'TRABAJADOR', estado: 'ACTIVO', debeCambiarPassword: password === dni
+        uid, rol, estado: 'ACTIVO', debeCambiarPassword: password === dni
+      });
+      await sincronizarAccesoDni(dni, correo).catch(error => {
+        console.error('No se pudo habilitar el acceso por DNI:', error);
+        avisoIndiceDni = ' El acceso por DNI se podrá habilitar al editar y guardar este usuario.';
       });
     } else {
       const datos = { primerNombre, segundoNombre, apellidoPaterno, apellidoMaterno, correo, empresa, sede, gerencia };
       await DB.actualizarUsuario(idExistente, datos);
+      await sincronizarAccesoDni(idExistente, correo).catch(error => {
+        console.error('No se pudo actualizar el acceso por DNI:', error);
+        avisoIndiceDni = ' Los cambios se guardaron, pero el acceso por DNI no pudo sincronizarse.';
+      });
       // Cambiar la contraseña de otro usuario desde el panel admin requeriría
       // Admin SDK/Cloud Functions (fuera de alcance): si el admin necesita
       // resetear la contraseña de alguien, usa "Restablecer contraseña" en
       // el login con el DNI de esa persona (envía el enlace a su correo).
     }
     ocultarCargando();
-    toast('exito', idExistente ? 'Trabajador actualizado.' : 'Trabajador creado correctamente.');
+    toast(avisoIndiceDni ? 'advertencia' : 'exito', `${idExistente ? 'Usuario actualizado.' : 'Usuario creado correctamente.'}${avisoIndiceDni}`);
     modalUsuarioOverlay.classList.remove('show');
     renderUsuarios();
   } catch (err) {
@@ -2093,10 +2183,11 @@ document.getElementById('btnProcesarImportar').addEventListener('click', () => {
             await DB.actualizarUsuario(dni, { primerNombre, segundoNombre, apellidoPaterno, apellidoMaterno, empresa, sede, gerencia, estado, correo, rol });
             actualizados++;
           } else {
-            await crearCuentaAuthParaUsuario(correo, dni);
-            await DB.crearUsuario(dni, { primerNombre, segundoNombre, apellidoPaterno, apellidoMaterno, empresa, sede, gerencia, estado, correo, rol, debeCambiarPassword: true });
+            const uid = await crearCuentaAuthParaUsuario(correo, dni);
+            await DB.crearUsuario(dni, { primerNombre, segundoNombre, apellidoPaterno, apellidoMaterno, empresa, sede, gerencia, estado, correo, uid, rol, debeCambiarPassword: true });
             creados++;
           }
+          await sincronizarAccesoDni(dni, correo);
         } catch (errFila) {
           console.error('Fila de importación:', dni, errFila);
           errores++;
@@ -2235,8 +2326,7 @@ window.addEventListener('DOMContentLoaded', () => {
     // válida — hay que repoblar el caché desde Firestore antes de decidir.
     if (!sesion && user) {
       try {
-        const usuarios = await DB.obtenerUsuarios();
-        const encontrado = usuarios.find(u => u.correo === user.email);
+        const encontrado = await DB.obtenerUsuarioPorUid(user.uid);
         if (encontrado && encontrado.estado === 'ACTIVO') {
           setSesion(encontrado);
           sesion = encontrado;
@@ -2257,22 +2347,7 @@ window.addEventListener('DOMContentLoaded', () => {
     document.getElementById('viewLogin').classList.remove('hidden');
     ocultarPantallaCarga();
 
-    // Bootstrap: la plataforma arranca sin ningún dato en Firestore. Si
-    // todavía no existe ningún ADMIN, se ofrece crear el primero directo
-    // desde el login (sin tocar la consola de Firebase a mano).
-    try {
-      const hayAdmin = await DB.existeAlgunAdmin();
-      if (!hayAdmin) document.getElementById('cajaCrearAdminInicial').classList.remove('hidden');
-    } catch (e) {
-      console.error('No se pudo verificar si existe un administrador:', e);
-    }
   });
-});
-
-document.getElementById('btnAbrirCrearAdmin').addEventListener('click', () => {
-  document.getElementById('formCrearAdmin').reset();
-  document.getElementById('formErrorCrearAdmin').classList.remove('show');
-  document.getElementById('modalCrearAdminOverlay').classList.add('show');
 });
 document.getElementById('btnCancelarCrearAdmin').addEventListener('click', () => document.getElementById('modalCrearAdminOverlay').classList.remove('show'));
 
@@ -2289,22 +2364,19 @@ document.getElementById('formCrearAdmin').addEventListener('submit', async (e) =
   const boton = e.target.querySelector('button[type=submit]');
   boton.disabled = true;
   try {
-    // Doble chequeo: evita crear un segundo "primer admin" por una carrera
-    // entre 2 pestañas abriendo el modal al mismo tiempo.
-    if (await DB.existeAlgunAdmin()) {
-      errorBox.textContent = 'Ya existe un administrador. Recarga la página e inicia sesión normalmente.';
-      errorBox.classList.add('show');
-      return;
+    if (correo !== CORREO_ADMINISTRADOR_BOOTSTRAP) {
+      throw new Error(`El primer administrador debe usar ${CORREO_ADMINISTRADOR_BOOTSTRAP}.`);
     }
     const [primerNombre, ...restoNombres] = nombres.split(/\s+/);
     const [apellidoPaterno, ...restoApellidos] = apellidos.split(/\s+/);
 
-    await createUserWithEmailAndPassword(auth, correo, password);
+    const credencial = await createUserWithEmailAndPassword(auth, correo, password);
     await DB.crearUsuario(dni, {
       primerNombre, segundoNombre: restoNombres.join(' '),
       apellidoPaterno, apellidoMaterno: restoApellidos.join(' '),
-      correo, sede: '', rol: 'ADMIN', estado: 'ACTIVO', debeCambiarPassword: false
+      correo, uid: credencial.user.uid, sede: '', rol: 'ADMIN', estado: 'ACTIVO', debeCambiarPassword: false
     });
+    await DB.registrarAdministrador(credencial.user.uid, correo);
 
     setSesion(await DB.obtenerUsuario(dni));
     document.getElementById('modalCrearAdminOverlay').classList.remove('show');

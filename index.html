@@ -4,9 +4,9 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>TRAMARSA LMS</title>
-<link rel="icon" type="image/png" href="https://raw.githubusercontent.com/Diego906p/imagenes/refs/heads/main/images/isotipo_tram.png">
+<link rel="icon" type="image/png" href="assets/isotipo_tram.png">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-<script src="https://unpkg.com/lucide@latest"></script>
+<script src="https://unpkg.com/lucide@0.468.0"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <script src="https://unpkg.com/pdf-lib@1.17.1/dist/pdf-lib.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
@@ -618,7 +618,7 @@ input[type=color] { border:1px solid var(--gray-200); border-radius:var(--radius
 <div id="viewLogin" class="hidden">
   <section class="hero-col">
     <div class="hero-logo">
-      <div class="flag-icon"><img src="https://raw.githubusercontent.com/Diego906p/imagenes/refs/heads/main/images/logo_tram_white.png" alt="Grupo Tramarsa"></div>
+      <div class="flag-icon"><img src="assets/logo_tram_white.png" alt="Grupo Tramarsa"></div>
     </div>
     <div class="hero-mid">
       <h1>Capacitación que impulsa nuestro <span class="accent">crecimiento</span></h1>
@@ -638,14 +638,14 @@ input[type=color] { border:1px solid var(--gray-200); border-radius:var(--radius
   <section class="form-col">
     <div class="login-card">
       <h2>Iniciar sesión</h2>
-      <p class="subtitle">Ingresa con tu número de DNI</p>
+      <p class="subtitle">Ingresa con tu DNI</p>
 
       <div class="error-msg" id="errorMsg"><i data-lucide="alert-circle" size="15"></i><span id="errorText"></span></div>
 
       <form id="loginForm">
         <div class="field-group">
           <label class="field-label">DNI</label>
-          <div class="field"><i data-lucide="id-card" size="17"></i><input type="text" id="loginDni" placeholder="12345678" maxlength="8" inputmode="numeric" required></div>
+          <div class="field"><i data-lucide="id-card" size="17"></i><input type="text" id="loginDni" placeholder="12345678" inputmode="numeric" pattern="[0-9]{8}" maxlength="8" required></div>
         </div>
         <div class="field-group">
           <label class="field-label">Contraseña</label>
@@ -658,10 +658,6 @@ input[type=color] { border:1px solid var(--gray-200); border-radius:var(--radius
         <button type="submit" class="btn-primary">Iniciar sesión <i data-lucide="arrow-right" size="17"></i></button>
       </form>
       <button type="button" id="btnOlvidoPassword" style="background:none;border:none;color:var(--blue-600);font-size:.8rem;font-weight:600;margin-top:12px;">¿Olvidaste tu contraseña?</button>
-      <div class="hint-box hidden" id="cajaCrearAdminInicial">
-        Todavía no hay ningún administrador registrado en esta plataforma.
-        <button type="button" id="btnAbrirCrearAdmin" style="background:none;border:none;color:var(--blue-600);font-weight:700;padding:0;">Crear la cuenta de administrador inicial</button>
-      </div>
     </div>
   </section>
 </div>
@@ -728,6 +724,7 @@ input[type=color] { border:1px solid var(--gray-200); border-radius:var(--radius
       <div class="form-group"><label>Nueva contraseña</label><input type="password" id="cNueva" required></div>
       <div class="form-group"><label>Confirmar nueva contraseña</label><input type="password" id="cConfirmar" required></div>
       <div class="modal-actions">
+        <button type="button" class="btn-cancel" id="btnCerrarSesionCambioObligatorio">Cerrar sesión</button>
         <button type="submit" class="btn-save">Guardar y continuar</button>
       </div>
     </form>
@@ -842,7 +839,7 @@ input[type=color] { border:1px solid var(--gray-200); border-radius:var(--radius
 <!-- Modal: nuevo/editar trabajador -->
 <div class="modal-overlay" id="modalUsuarioOverlay">
   <div class="modal">
-    <h2 id="modalUsuarioTitulo">Nuevo trabajador</h2>
+    <h2 id="modalUsuarioTitulo">Nuevo usuario</h2>
     <div class="form-error" id="formErrorUsuario"></div>
     <form id="formUsuario">
       <input type="hidden" id="uId">
@@ -858,7 +855,10 @@ input[type=color] { border:1px solid var(--gray-200); border-radius:var(--radius
         <div class="form-group"><label>DNI</label><input type="text" id="uDni" required maxlength="8"></div>
         <div class="form-group" id="grupoUPassword"><label>Contraseña inicial</label><input type="text" id="uPassword" placeholder="Por defecto: el DNI"></div>
       </div>
-      <div class="form-group"><label>Correo corporativo</label><input type="text" id="uCorreo" required placeholder="usuario@tramarsa.com.pe"></div>
+      <div class="form-row">
+        <div class="form-group"><label>Rol de acceso</label><select id="uRol"><option value="TRABAJADOR">Trabajador</option><option value="ADMIN">Administrador</option></select></div>
+        <div class="form-group"><label>Correo de recuperación</label><input type="text" id="uCorreo" required placeholder="usuario@tramarsa.com.pe"></div>
+      </div>
       <div class="form-row">
         <div class="form-group"><label>Empresa</label><input type="text" id="uEmpresa" placeholder="Ej. Tramarsa"></div>
         <div class="form-group"><label>Sede</label><input type="text" id="uSede" placeholder="Ej. Lima"></div>

@@ -1,0 +1,19 @@
+name = "tramarsa-lms-gateway"
+main = "src/index.js"
+compatibility_date = "2026-07-16"
+
+[vars]
+FIREBASE_PROJECT_ID = "grupotramarsa-lms-plantilla"
+GITHUB_BRANCH = "main"
+GITHUB_OWNER = "Diego906p"
+GITHUB_REPO = "grupotramarsa-lms-plantilla"
+# Completar al desplegar. No usar * en producción.
+ALLOWED_ORIGINS = "http://localhost:8000,http://127.0.0.1:8000,https://diego906p.github.io"
+# Correo(s) con permiso de administrar archivos, separados por coma.
+ADMIN_EMAILS = "diego906p@gmail.com"
+FIREBASE_API_KEY = "AIzaSyDoFOs8SFpWIOmmcr5swWg6kvwgfk-Ujf4"
+PUBLIC_GATEWAY_URL = "https://tramarsa-lms-gateway.diego906p.workers.dev"
+
+[[kv_namespaces]]
+binding = "LMS_LOGIN_INDEX"
+id = "962c1f027fa747eebbdea9ebdb0ef166"

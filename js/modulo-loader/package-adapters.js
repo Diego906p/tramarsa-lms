@@ -123,3 +123,57 @@ export async function jszipAArchivoZip(zip, nombreBase) {
   const blob = await zip.generateAsync({ type: 'blob', compression: 'DEFLATE' });
   return new File([blob], `${nombreBase}.zip`, { type: 'application/zip' });
 }
+
+// El paquete es contenido de terceros (incluida IA): se valida antes de
+// guardarlo. Esto no intenta interpretar el diseño, solo comprueba el
+// contrato reproducible y evita formatos/rutas que el LMS nunca ejecutaría.
+export async function validarPaqueteModulo(zip) {
+  const entradas = Object.entries(zip.files).filter(([, entry]) => !entry.dir);
+  if (!entradas.length) throw new Error('El paquete no contiene archivos.');
+  if (entradas.length > 300) throw new Error('El paquete supera el límite de 300 archivos.');
+
+  let pesoDescomprimido = 0;
+  for (const [ruta, entry] of entradas) {
+    if (ruta.startsWith('/') || ruta.split('/').includes('..') || ruta.includes('\\')) {
+      throw new Error(`El paquete contiene una ruta no permitida: ${ruta}`);
+    }
+    if (/\.(exe|dll|bat|cmd|ps1|sh|php|py|jar)$/i.test(ruta)) {
+      throw new Error(`El paquete contiene un tipo de archivo no permitido: ${ruta}`);
+    }
+    pesoDescomprimido += Number(entry._data && entry._data.uncompressedSize) || 0;
+  }
+  if (pesoDescomprimido > 120 * 1024 * 1024) {
+    throw new Error('El contenido descomprimido supera el límite de 120 MB.');
+  }
+
+  const manifests = entradas.filter(([ruta]) => /(^|\/)manifest\.json$/i.test(ruta));
+  const indices = entradas.filter(([ruta]) => /(^|\/)index\.html?$/i.test(ruta));
+  if (!manifests.length && !indices.length) {
+    throw new Error('El paquete debe incluir manifest.json (formato recomendado) o index.html (compatibilidad).');
+  }
+  if (!manifests.length) return { formato: 'legacy', archivos: entradas.length, pesoDescomprimido };
+
+  const [rutaManifest, entradaManifest] = manifests.sort(([a], [b]) => a.split('/').length - b.split('/').length)[0];
+  let manifest;
+  try { manifest = JSON.parse(await entradaManifest.async('text')); }
+  catch (_) { throw new Error('El manifest.json no contiene JSON válido.'); }
+  if (manifest.version !== 2 || !Array.isArray(manifest.laminas) || !manifest.laminas.length) {
+    throw new Error('El manifest debe declarar version: 2 y al menos una lámina.');
+  }
+  if (manifest.laminas.length > 80) throw new Error('El paquete supera el límite de 80 láminas.');
+
+  const base = rutaManifest.slice(0, rutaManifest.lastIndexOf('/') + 1);
+  const existe = ruta => typeof ruta === 'string' && !!zip.files[base + ruta];
+  if (manifest.css && !existe(manifest.css)) throw new Error(`No existe el CSS declarado: ${manifest.css}`);
+  if (manifest.contenido && !existe(manifest.contenido)) throw new Error(`No existe el contenido declarado: ${manifest.contenido}`);
+  for (const [i, lamina] of manifest.laminas.entries()) {
+    if (!lamina || typeof lamina !== 'object') throw new Error(`La lámina ${i + 1} no es válida.`);
+    if (!lamina.imagen && !lamina.html && !manifest.contenido) {
+      throw new Error(`La lámina ${i + 1} debe declarar imagen, html o usar contenido compartido.`);
+    }
+    for (const ruta of [lamina.imagen, lamina.html, lamina.audio].filter(Boolean)) {
+      if (!existe(ruta)) throw new Error(`No existe "${ruta}" declarado en la lámina ${i + 1}.`);
+    }
+  }
+  return { formato: 'v2', archivos: entradas.length, pesoDescomprimido, laminas: manifest.laminas.length };
+}

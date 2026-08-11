@@ -21,12 +21,13 @@ import { getAuth } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-aut
 import { getFirestore } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js';
 
 export const firebaseConfig = {
-  apiKey: 'AIzaSyD2L1l6NiFuKRunbKIIHLJSCPILKY75KIM',
-  authDomain: 'tramarsa-lms.firebaseapp.com',
-  projectId: 'tramarsa-lms',
-  storageBucket: 'tramarsa-lms.firebasestorage.app',
-  messagingSenderId: '592728620545',
-  appId: '1:592728620545:web:eb83d940136dec1aecca00'
+  apiKey: 'AIzaSyDoFOs8SFpWIOmmcr5swWg6kvwgfk-Ujf4',
+  authDomain: 'grupotramarsa-lms-plantilla.firebaseapp.com',
+  projectId: 'grupotramarsa-lms-plantilla',
+  storageBucket: 'grupotramarsa-lms-plantilla.firebasestorage.app',
+  messagingSenderId: '555326148251',
+  appId: '1:555326148251:web:a575d0e782543a71d9803e',
+  measurementId: 'G-PN248K6C11'
 };
 
 export function firebaseEstaConfigurado() {

@@ -7,11 +7,12 @@
    Firestore.
    ============================================================ */
 
-import { getSesion, nombreCompleto, renderDashboardTrabajador, mostrarCargando, ocultarCargando, toast } from './app.js';
+import { getSesion, nombreCompleto, escaparHtml, renderDashboardTrabajador, mostrarCargando, ocultarCargando, toast } from './app.js';
 import * as DB from './db-firestore.js';
 import { archivoAJSZip } from './modulo-loader/package-adapters.js';
 import { buscarIndexHtml } from './modulo-loader/virtual-asset-resolver.js';
 import { seleccionarDriver, desbloquearAudioLaminas } from './modulo-loader/drivers.js';
+import { descargarArchivoPrivado } from './github-storage.js';
 
 const RP = {
   moduloId: null,
@@ -84,13 +85,15 @@ function cargarVimeoSdk() {
   return vimeoSdkPromise;
 }
 
-// Descarga un archivo por su URL pública de GitHub (raw.githubusercontent.com)
-// y lo entrega como File, listo para abrirComoJSZip()/pdf-lib.
-async function descargarArchivoDesdeUrl(url, nombre) {
-  const resp = await fetch(url);
-  if (!resp.ok) throw new Error(`No se pudo descargar el archivo (${resp.status}).`);
-  const blob = await resp.blob();
-  return new File([blob], nombre || url.split('/').pop());
+// Los registros nuevos guardan una ruta privada; las URLs antiguas se leen
+// solo como compatibilidad durante la migración de datos.
+async function descargarArchivoDesdeUrl(ruta, nombre, tipo = 'archivo') {
+  const usuario = getSesion();
+  return descargarArchivoPrivado(ruta, nombre, {
+    moduloId: RP.moduloId,
+    usuarioId: usuario && usuario.dni,
+    tipo
+  });
 }
 
 async function abrirReproductor(moduloId) {
@@ -109,31 +112,30 @@ async function abrirReproductor(moduloId) {
   document.getElementById('reproductorPaso').textContent = 'Cargando módulo...';
   mostrarCargandoReproductor();
 
-  // Marca el inicio en el historial (si no existe ningún registro todavía).
-  // Si el módulo ya está COMPLETADO, no se crea un intento nuevo: el modo
-  // "Revisar" solo permite ver el contenido, no reabre la evaluación como
-  // pendiente ni pisa el registro de aprobación ya guardado.
-  const usuario = getSesion();
-  await DB.crearHistorialSiNoExiste(usuario.dni, moduloId, {
-    estado: 'EN_PROGRESO', puntaje: null, avancePct: 0, fechaInicio: new Date().toISOString(), fechaFin: null
-  });
-
-  if (!RP.modulo.archivoUrl) {
-    renderReproductorError('Este módulo no tiene un archivo .zip o .rar cargado todavía. Contacta al administrador.');
-    return;
-  }
-
   try {
+    // Marca el inicio en el historial (si no existe ningún registro todavía).
+    // Si el módulo ya está COMPLETADO, no se crea un intento nuevo: el modo
+    // "Revisar" solo permite ver el contenido, no reabre la evaluación como
+    // pendiente ni pisa el registro de aprobación ya guardado.
+    const usuario = getSesion();
+    if (!usuario || !usuario.dni) throw new Error('La sesión no contiene un DNI válido. Vuelve a iniciar sesión.');
+    await DB.crearHistorialSiNoExiste(usuario.dni, moduloId, {
+      estado: 'EN_PROGRESO', puntaje: null, avancePct: 0, fechaInicio: new Date().toISOString(), fechaFin: null
+    });
+
+    if (!RP.modulo.archivoUrl) {
+      renderReproductorError('Este módulo no tiene un archivo .zip o .rar cargado todavía. Contacta al administrador.');
+      return;
+    }
+
     const archivo = await descargarArchivoDesdeUrl(RP.modulo.archivoUrl, RP.modulo.archivoNombre);
     RP.zip = await archivoAJSZip(archivo);
+    await montarDriverDelModulo();
   } catch (e) {
-    console.error('No se pudo leer el archivo del módulo:', e);
-    const mensajeEspecifico = e instanceof Error && e.message.includes('file://');
-    renderReproductorError(mensajeEspecifico ? e.message : 'El archivo del módulo no se pudo leer. Verifica que sea un .zip o .rar válido y no esté dañado.');
-    return;
+    console.error('No se pudo iniciar el módulo:', e);
+    const mensaje = e instanceof Error && e.message ? e.message : 'Error desconocido al iniciar el módulo.';
+    renderReproductorError(`No se pudo cargar el módulo: ${mensaje}`);
   }
-
-  await montarDriverDelModulo();
 }
 
 // El núcleo nunca pregunta "¿qué tipo de módulo es esto?": selecciona el
@@ -184,7 +186,7 @@ function renderReproductorError(mensaje) {
   document.getElementById('reproductorBody').innerHTML = `
     <div class="rp-card" style="text-align:center;">
       <i data-lucide="alert-triangle" size="32" style="color:var(--orange-500);"></i>
-      <p style="margin-top:12px;color:var(--gray-700);">${mensaje}</p>
+      <p style="margin-top:12px;color:var(--gray-700);">${escaparHtml(mensaje)}</p>
       <button class="btn-save" style="margin-top:16px;" onclick="cerrarReproductor()">Cerrar</button>
     </div>`;
   lucide.createIcons();
@@ -276,11 +278,11 @@ function renderPasoPregunta() {
         <span class="rp-pregunta-num">Pregunta ${RP.indicePregunta + 1} de ${total}</span>
         <span class="rp-timer"><i data-lucide="clock" size="14"></i> <span id="tiempoRestante">${RP.tiempoPorPregunta}</span>s</span>
       </div>
-      <div class="rp-pregunta-texto">${pregunta.enunciado}</div>
+      <div class="rp-pregunta-texto">${escaparHtml(pregunta.enunciado)}</div>
       <div id="listaAlternativas">
         ${pregunta.alternativas.map((a, i) => `
           <div class="rp-alternativa" data-index="${i}" onclick="seleccionarAlternativa(${i})">
-            ${a.texto}
+            ${escaparHtml(a.texto)}
           </div>
         `).join('')}
       </div>
@@ -453,7 +455,7 @@ async function generarBytesPdfCertificado(usuario, modulo, fechaEmisionISO) {
     'DD de MM del AAAAA': fechaTexto
   };
 
-  const certArchivo = await descargarArchivoDesdeUrl(modulo.certificadoUrl, modulo.certificadoNombre);
+  const certArchivo = await descargarArchivoDesdeUrl(modulo.certificadoUrl, modulo.certificadoNombre, 'certificado');
   const bytes = new Uint8Array(await certArchivo.arrayBuffer());
   // pdf.js toma posesión (transferable) del ArrayBuffer que recibe y lo deja
   // vacío; se le pasa una copia para no perder los bytes que pdf-lib

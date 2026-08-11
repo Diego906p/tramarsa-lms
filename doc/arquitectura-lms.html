@@ -1,0 +1,219 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>TRAMARSA LMS | Arquitectura comprobada</title>
+<style>
+  :root { --ink:#15233d; --muted:#5c6b82; --line:#a9b8cc; --blue:#0a55d5; --navy:#12347a; --sky:#eaf2ff; --green:#16835a; --mint:#e6f8ef; --orange:#dc7a16; --sand:#fff3df; --violet:#6b43c6; --lav:#f0ebff; --red:#bf4d4d; --pink:#ffeded; --gray:#f2f5f9; }
+  * { box-sizing:border-box; }
+  html, body { margin:0; min-height:100%; background:#edf2f8; color:var(--ink); font-family:Inter,Arial,sans-serif; }
+  body { padding:24px; }
+  .sheet { width:min(1920px,100%); margin:auto; overflow:auto; background:#fff; border:1px solid #dce5f0; box-shadow:0 18px 50px rgba(19,52,122,.13); }
+  .titlebar { min-width:1780px; display:flex; justify-content:space-between; align-items:end; padding:28px 34px 20px; border-bottom:1px solid #dce5f0; background:linear-gradient(100deg,#f8fbff,#eef5ff); }
+  h1 { margin:0; color:#12347a; font-size:26px; letter-spacing:.2px; }
+  .subtitle { margin:6px 0 0; color:var(--muted); font-size:13px; }
+  .legend { display:flex; gap:18px; align-items:center; color:var(--muted); font-size:12px; }
+  .key { display:flex; gap:7px; align-items:center; white-space:nowrap; }
+  .swatch { width:25px; height:0; border-top:2px solid var(--blue); position:relative; }
+  .swatch::after { content:''; position:absolute; right:-1px; top:-5px; border-left:7px solid var(--blue); border-top:4px solid transparent; border-bottom:4px solid transparent; }
+  .swatch.dashed { border-top-style:dashed; border-top-color:#8c98a9; }
+  .swatch.dashed::after { display:none; }
+  svg { display:block; min-width:1780px; width:100%; height:auto; background:#fff; }
+  .zone { fill:#fbfcfe; stroke:#d9e2ee; stroke-width:1.5; stroke-dasharray:5 6; }
+  .zone-title { font-size:12px; font-weight:800; letter-spacing:1.2px; fill:#71809a; }
+  .node rect { stroke-width:1.5; rx:13; }
+  .node .head { font-size:15px; font-weight:800; fill:#17294a; }
+  .node .body { font-size:11.5px; fill:#53627b; }
+  .node .micro { font-size:10px; fill:#74829a; }
+  .node .badge { font-size:10px; font-weight:800; letter-spacing:.5px; }
+  .node { cursor:default; }
+  .node:hover rect { filter:brightness(.975); stroke-width:2.3; }
+  .browser rect { fill:var(--sky); stroke:#86afea; } .browser .badge { fill:#0a55d5; }
+  .firebase rect { fill:var(--mint); stroke:#81cba9; } .firebase .badge { fill:#16835a; }
+  .worker rect { fill:var(--lav); stroke:#a98be9; } .worker .badge { fill:#6b43c6; }
+  .github rect { fill:var(--sand); stroke:#efbf74; } .github .badge { fill:#b25d09; }
+  .module rect { fill:#eef8fb; stroke:#83c8d9; } .module .badge { fill:#15728b; }
+  .email rect { fill:var(--pink); stroke:#ec9c9c; } .email .badge { fill:#b53d3d; }
+  .local rect { fill:var(--gray); stroke:#bac7d9; } .local .badge { fill:#53627b; }
+  .inactive rect { fill:#f7f8fa; stroke:#b6beca; stroke-dasharray:5 4; } .inactive .badge { fill:#7d8795; }
+  .connector { fill:none; stroke:var(--line); stroke-width:1.75; marker-end:url(#arrow); }
+  .connector.secure { stroke:#4178ce; stroke-width:2; marker-end:url(#arrowBlue); }
+  .connector.data { stroke:#2c9c73; stroke-width:2; marker-end:url(#arrowGreen); }
+  .connector.warn { stroke:#cf8126; stroke-width:2; marker-end:url(#arrowOrange); }
+  .connector.email { stroke:#bd5b61; stroke-width:2; marker-end:url(#arrowRed); }
+  .connector.dashed { stroke:#9ca7b6; stroke-dasharray:7 6; marker-end:none; }
+  .label { font-size:10.5px; fill:#4f607a; font-weight:700; paint-order:stroke; stroke:#fff; stroke-width:4px; stroke-linejoin:round; }
+  .label.blue { fill:#285aab; } .label.green { fill:#197554; } .label.orange { fill:#a45a0c; } .label.red { fill:#a63f46; }
+  .footer { min-width:1780px; display:flex; justify-content:space-between; padding:15px 34px; color:#6b778c; font-size:11px; border-top:1px solid #dce5f0; background:#f8fafc; }
+  .tip { position:fixed; z-index:10; max-width:310px; padding:10px 12px; border-radius:9px; color:#fff; background:#17294a; box-shadow:0 8px 24px rgba(0,0,0,.2); font-size:12px; line-height:1.4; pointer-events:none; opacity:0; transform:translateY(4px); transition:.12s; }
+  .tip.show { opacity:1; transform:translateY(0); }
+  @media (max-width:700px) { body { padding:0; } .sheet { border:0; box-shadow:none; } }
+</style>
+</head>
+<body>
+<div class="sheet">
+  <header class="titlebar">
+    <div>
+      <h1>TRAMARSA LMS · Arquitectura y flujo de conectividad</h1>
+      <p class="subtitle">Representación basada exclusivamente en archivos y configuraciones del proyecto · Pase el cursor sobre un componente para ver su función.</p>
+    </div>
+    <div class="legend">
+      <span class="key"><i class="swatch"></i> conexión activa</span>
+      <span class="key"><i class="swatch dashed"></i> configurado / no verificable como activo</span>
+    </div>
+  </header>
+
+  <svg viewBox="0 0 1780 1320" role="img" aria-label="Diagrama de arquitectura del LMS">
+    <defs>
+      <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#a9b8cc"/></marker>
+      <marker id="arrowBlue" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#4178ce"/></marker>
+      <marker id="arrowGreen" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#2c9c73"/></marker>
+      <marker id="arrowOrange" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#cf8126"/></marker>
+      <marker id="arrowRed" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#bd5b61"/></marker>
+    </defs>
+
+    <rect class="zone" x="28" y="28" width="515" height="1238" rx="18"/>
+    <text class="zone-title" x="53" y="56">CLIENTE / NAVEGADOR</text>
+    <rect class="zone" x="568" y="28" width="555" height="1238" rx="18"/>
+    <text class="zone-title" x="593" y="56">SERVICIOS DE DATOS Y SEGURIDAD</text>
+    <rect class="zone" x="1148" y="28" width="604" height="1238" rx="18"/>
+    <text class="zone-title" x="1173" y="56">REPOSITORIO, PAQUETES Y ENTREGA</text>
+
+    <!-- Entradas y frontend -->
+    <g class="node local" data-tip="El único arranque local explícito: abre index.html y ejecuta python -m http.server 8000.">
+      <rect x="55" y="84" width="220" height="92"/><text class="badge" x="75" y="108">LOCAL</text><text class="head" x="75" y="132">iniciar_index.bat</text><text class="body" x="75" y="152">Python HTTP server · :8000</text>
+    </g>
+    <g class="node inactive" data-tip="El origen https://diego906p.github.io está permitido por CORS en el Worker. No hay workflow ni configuración de GitHub Pages en el repositorio, por lo que no se confirma que aloje el LMS.">
+      <rect x="300" y="84" width="215" height="92"/><text class="badge" x="320" y="108">NO VERIFICADO</text><text class="head" x="320" y="132">GitHub Pages</text><text class="body" x="320" y="152">Origen permitido por CORS</text>
+    </g>
+    <g class="node browser" data-tip="index.html carga app.js y reproductor.js como módulos ES. Su CSS principal está dentro del propio HTML.">
+      <rect x="80" y="225" width="410" height="128"/><text class="badge" x="105" y="250">FRONTEND ESTÁTICO</text><text class="head" x="105" y="279">index.html · js/app.js</text><text class="body" x="105" y="302">Panel de administrador y trabajador</text><text class="body" x="105" y="322">UI, sesión visible, módulos, usuarios</text>
+    </g>
+    <g class="node browser" data-tip="Módulos del navegador que encapsulan Firebase, el gateway privado, Firestore y el reproductor.">
+      <rect x="80" y="392" width="410" height="135"/><text class="badge" x="105" y="417">LÓGICA DEL CLIENTE</text><text class="head" x="105" y="446">auth-gateway · github-storage</text><text class="body" x="105" y="469">db-firestore · firebase-config</text><text class="body" x="105" y="489">reproductor · modulo-loader</text>
+    </g>
+    <g class="node browser" data-tip="Dependencias externas cargadas por index.html. libarchive/WASM está incluido localmente en js/vendor.">
+      <rect x="80" y="570" width="410" height="120"/><text class="badge" x="105" y="595">BIBLIOTECAS</text><text class="head" x="105" y="623">Firebase SDK · JSZip · PDF.js</text><text class="body" x="105" y="645">pdf-lib · SheetJS · Lucide · Inter</text><text class="micro" x="105" y="668">CDN: Google Fonts, unpkg, cdnjs</text>
+    </g>
+    <g class="node module" data-tip="Al abrir un módulo, el navegador recibe el ZIP autorizado, lo descomprime y selecciona el driver v2 o el fallback index.html.">
+      <rect x="80" y="743" width="410" height="155"/><text class="badge" x="105" y="768">REPRODUCTOR CONTROLADO POR LMS</text><text class="head" x="105" y="798">DriverLaminas / DriverIndexHtml</text><text class="body" x="105" y="821">iframe sandbox · postMessage</text><text class="body" x="105" y="841">audio, progreso, evaluación, reanudación</text><text class="body" x="105" y="861">avance no controlado por el HTML visual</text>
+    </g>
+    <g class="node module" data-tip="El PDF de plantilla se descarga por el gateway y se personaliza localmente con PDF.js y pdf-lib. El PDF final se descarga al navegador.">
+      <rect x="80" y="944" width="410" height="112"/><text class="badge" x="105" y="969">SALIDA DEL NAVEGADOR</text><text class="head" x="105" y="997">Certificado individual</text><text class="body" x="105" y="1020">PDF personalizado y descargado localmente</text>
+    </g>
+
+    <!-- Firebase -->
+    <g class="node firebase" data-tip="Firebase Authentication se usa desde el SDK web para iniciar sesión, restaurar sesión, cerrar sesión y cambiar contraseña.">
+      <rect x="600" y="104" width="238" height="114"/><text class="badge" x="622" y="129">FIREBASE</text><text class="head" x="622" y="157">Authentication</text><text class="body" x="622" y="180">Correo + contraseña</text><text class="body" x="622" y="199">JWT / ID token</text>
+    </g>
+    <g class="node firebase" data-tip="Cloud Firestore contiene la información de negocio. Sus reglas autorizan administradores, propietarios y usuarios autenticados.">
+      <rect x="866" y="104" width="226" height="114"/><text class="badge" x="888" y="129">FIREBASE</text><text class="head" x="888" y="157">Cloud Firestore</text><text class="body" x="888" y="180">Base de datos del LMS</text><text class="body" x="888" y="199">Reglas desplegables</text>
+    </g>
+    <g class="node firebase" data-tip="Colecciones utilizadas por db-firestore.js y por las reglas: usuarios, perfiles, administradores, modulos, asignaciones, historial y configuracion.">
+      <rect x="600" y="260" width="492" height="125"/><text class="badge" x="622" y="285">DOCUMENTOS FIRESTORE</text><text class="head" x="622" y="313">usuarios · perfiles · administradores</text><text class="body" x="622" y="336">modulos · asignaciones · historial · configuracion</text><text class="micro" x="622" y="361">Historial: DNI_moduloId · progreso, puntaje, fechas</text>
+    </g>
+
+    <!-- Worker -->
+    <g class="node worker" data-tip="Cloudflare Worker es la puerta de archivos privados y de los flujos DNI. Revisa origen permitido, JWT Firebase, rol y asignación antes de acceder a archivos.">
+      <rect x="635" y="454" width="422" height="145"/><text class="badge" x="660" y="479">CLOUDFLARE WORKERS</text><text class="head" x="660" y="508">tramarsa-lms-gateway</text><text class="body" x="660" y="532">/v1/login · /v1/password-reset</text><text class="body" x="660" y="552">/v1/assets · /v1/login-index</text><text class="body" x="660" y="575">/v1/brand/logo</text>
+    </g>
+    <g class="node worker" data-tip="KV guarda el índice privado DNI a correo interno. El navegador no lee KV directamente.">
+      <rect x="600" y="650" width="238" height="104"/><text class="badge" x="622" y="675">CLOUDFLARE KV</text><text class="head" x="622" y="703">LMS_LOGIN_INDEX</text><text class="body" x="622" y="726">dni:{DNI} → correo</text>
+    </g>
+    <g class="node worker" data-tip="Estos valores no se guardan en el repositorio. El Worker usa GITHUB_TOKEN, RESEND_API_KEY y FIREBASE_SERVICE_ACCOUNT_JSON.">
+      <rect x="866" y="650" width="226" height="104"/><text class="badge" x="888" y="675">SECRETOS</text><text class="head" x="888" y="703">Credenciales servidor</text><text class="body" x="888" y="726">GitHub · Resend · Firebase</text>
+    </g>
+    <g class="node inactive" data-tip="firebase-config.js declara storageBucket y measurementId, pero el proyecto no importa Firebase Storage ni Firebase Analytics. No existe conexión activa comprobada.">
+      <rect x="600" y="804" width="492" height="82"/><text class="badge" x="622" y="829">CONFIGURADO, SIN USO EN CÓDIGO</text><text class="head" x="622" y="856">Firebase Storage / Analytics</text><text class="body" x="886" y="856">sin importación ni flujo activo</text>
+    </g>
+
+    <!-- GitHub -->
+    <g class="node github" data-tip="El repositorio remoto configurado es privado. La rama configurada para el Worker es main.">
+      <rect x="1180" y="84" width="530" height="114"/><text class="badge" x="1205" y="109">GITHUB PRIVADO</text><text class="head" x="1205" y="138">Diego906p/grupotramarsa-lms-plantilla · main</text><text class="body" x="1205" y="161">Código fuente, assets y paquetes administrados</text><text class="body" x="1205" y="180">GitHub Contents API solo a través del Worker</text>
+    </g>
+    <g class="node github" data-tip="El administrador sube módulos, certificados y fotos. El Worker genera rutas seguras y realiza commits mediante la API Contents.">
+      <rect x="1180" y="254" width="252" height="137"/><text class="badge" x="1202" y="279">RUTAS PRIVADAS</text><text class="head" x="1202" y="307">modulos/{id}/...</text><text class="body" x="1202" y="330">ZIP / RAR del módulo</text><text class="body" x="1202" y="351">certificados/{id}/...</text><text class="body" x="1202" y="371">fotos/{DNI}/...</text>
+    </g>
+    <g class="node github" data-tip="Los ejemplos y la plantilla v2 están versionados en el repositorio. Son material de referencia para creación y carga administrativa.">
+      <rect x="1458" y="254" width="252" height="137"/><text class="badge" x="1480" y="279">FUENTE / PLANTILLAS</text><text class="head" x="1480" y="307">modulos/ · plantillas/</text><text class="body" x="1480" y="330">M01…M08</text><text class="body" x="1480" y="351">Contrato módulo IA v2</text>
+    </g>
+    <g class="node module" data-tip="El formato oficial v2 requiere manifest.json, contenido.html, una lámina por audio y recursos empaquetados. El LMS valida límites y referencias al cargar.">
+      <rect x="1180" y="468" width="530" height="141"/><text class="badge" x="1205" y="493">PAQUETE DE MÓDULO</text><text class="head" x="1205" y="521">ZIP privado → manifest.json v2</text><text class="body" x="1205" y="545">contenido.html + CSS/JS visual + MP3 + imágenes</text><text class="body" x="1205" y="566">Preguntas interpretadas y guardadas en Firestore</text><text class="micro" x="1205" y="590">RAR se convierte a ZIP antes de subir</text>
+    </g>
+    <g class="node module" data-tip="La plantilla PDF se conserva en el repositorio privado. El navegador la descarga autorizadamente y genera la versión del participante.">
+      <rect x="1180" y="666" width="252" height="103"/><text class="badge" x="1202" y="691">CERTIFICADOS</text><text class="head" x="1202" y="719">PDF de plantilla</text><text class="body" x="1202" y="742">Descarga autorizada</text>
+    </g>
+    <g class="node github" data-tip="El logo blanco se sirve por un endpoint público específico del Worker para poder incluirlo en los correos. Los módulos no se exponen por ese endpoint.">
+      <rect x="1458" y="666" width="252" height="103"/><text class="badge" x="1480" y="691">ASSET PÚBLICO ÚNICO</text><text class="head" x="1480" y="719">logo_tram_white.png</text><text class="body" x="1480" y="742">/v1/brand/logo</text>
+    </g>
+
+    <!-- Email -->
+    <g class="node email" data-tip="La cuenta de servicio del Worker obtiene un token OAuth y solicita a Firebase un enlace de restablecimiento sin enviar el correo nativo.">
+      <rect x="1180" y="844" width="252" height="120"/><text class="badge" x="1202" y="869">GOOGLE</text><text class="head" x="1202" y="897">OAuth + Identity Toolkit</text><text class="body" x="1202" y="920">oobLink seguro</text><text class="body" x="1202" y="941">Restablecimiento Firebase</text>
+    </g>
+    <g class="node email" data-tip="Resend recibe HTML corporativo y el enlace oobLink. En caso de error, el Worker intenta el correo nativo de Firebase como respaldo.">
+      <rect x="1458" y="844" width="252" height="120"/><text class="badge" x="1480" y="869">CORREO</text><text class="head" x="1480" y="897">Resend API</text><text class="body" x="1480" y="920">HTML corporativo</text><text class="body" x="1480" y="941">Remitente de demostración</text>
+    </g>
+    <g class="node email" data-tip="El correo de recuperación llega al correo interno asociado al DNI en KV.">
+      <rect x="1315" y="1040" width="260" height="96"/><text class="badge" x="1337" y="1065">DESTINO</text><text class="head" x="1337" y="1093">Correo del usuario</text><text class="body" x="1337" y="1116">Botón: nueva contraseña</text>
+    </g>
+
+    <!-- Connectors -->
+    <path class="connector" d="M165 176 L165 225"/><text class="label" x="177" y="205">abre</text>
+    <path class="connector dashed" d="M407 176 L407 225"/><text class="label" x="420" y="205">origen CORS</text>
+    <path class="connector secure" d="M285 353 L285 392"/><text class="label blue" x="299" y="378">módulos ES</text>
+    <path class="connector" d="M285 527 L285 570"/><text class="label" x="299" y="552">usa</text>
+    <path class="connector secure" d="M285 690 L285 743"/><text class="label blue" x="299" y="722">ZIP/RAR</text>
+    <path class="connector data" d="M285 898 L285 944"/><text class="label green" x="299" y="927">PDF final</text>
+
+    <path class="connector secure" d="M490 275 C540 275 555 160 600 160"/><text class="label blue" x="516" y="195">Firebase SDK</text>
+    <path class="connector data" d="M490 316 C550 316 550 318 600 318"/><text class="label green" x="512" y="307">Firestore SDK</text>
+    <path class="connector secure" d="M490 454 C558 454 575 525 635 525"/><text class="label blue" x="519" y="483">DNI / JWT</text>
+    <path class="connector secure" d="M490 820 C550 820 550 780 600 780"/><text class="label blue" x="516" y="800">avance / resultados</text>
+
+    <path class="connector data" d="M838 160 L866 160"/><text class="label green" x="841" y="147">UID</text>
+    <path class="connector data" d="M846 218 L846 260"/><text class="label green" x="860" y="243">documentos</text>
+    <path class="connector secure" d="M846 385 L846 454"/><text class="label blue" x="859" y="422">reglas / permisos</text>
+    <path class="connector secure" d="M635 525 C575 525 570 160 600 160"/><text class="label blue" x="548" y="437">valida correo + clave</text>
+    <path class="connector data" d="M1057 525 C1125 525 1125 318 1092 318"/><text class="label green" x="1070" y="414">consulta autorización</text>
+    <path class="connector secure" d="M735 599 L735 650"/><text class="label blue" x="748" y="628">DNI → correo</text>
+    <path class="connector" d="M958 599 L958 650"/><text class="label" x="970" y="628">usa</text>
+
+    <path class="connector warn" d="M1057 525 C1125 525 1125 141 1180 141"/><text class="label orange" x="1082" y="226">Contents API con secreto</text>
+    <path class="connector warn" d="M1290 198 L1290 254"/><text class="label orange" x="1303" y="231">almacena</text>
+    <path class="connector" d="M1584 198 L1584 254"/><text class="label" x="1597" y="231">versiona</text>
+    <path class="connector warn" d="M1306 391 L1306 468"/><text class="label orange" x="1320" y="432">descarga privada</text>
+    <path class="connector" d="M1555 391 L1555 468"/><text class="label" x="1568" y="432">estructura v2</text>
+    <path class="connector warn" d="M1306 609 L1306 666"/><text class="label orange" x="1320" y="641">plantilla PDF</text>
+    <path class="connector" d="M1584 609 L1584 666"/><text class="label" x="1597" y="641">logo</text>
+    <path class="connector secure" d="M1180 538 C1112 538 1095 715 490 790"/><text class="label blue" x="815" y="703">ZIP autorizado</text>
+    <path class="connector secure" d="M1180 717 C1060 717 930 970 490 1000"/><text class="label blue" x="840" y="905">PDF autorizado</text>
+
+    <path class="connector email" d="M1057 570 C1128 570 1125 904 1180 904"/><text class="label red" x="1080" y="756">cuenta de servicio</text>
+    <path class="connector email" d="M1432 904 L1458 904"/><text class="label red" x="1434" y="891">oobLink</text>
+    <path class="connector email" d="M1584 964 L1450 1040"/><text class="label red" x="1518" y="1015">correo HTML</text>
+    <path class="connector email" d="M1057 548 C1120 548 1145 1025 1315 1088"/><text class="label red" x="1115" y="1006">respaldo Firebase si falla</text>
+  </svg>
+
+  <footer class="footer">
+    <span>Fuentes examinadas: index.html · js/ · worker/ · firebase.json · firestore.rules · iniciar_index.bat · plantillas/ · modulos/</span>
+    <span>Archivo visual autónomo · no requiere red para abrirse</span>
+  </footer>
+</div>
+<div class="tip" id="tip"></div>
+<script>
+  const tip = document.getElementById('tip');
+  document.querySelectorAll('[data-tip]').forEach(node => {
+    node.addEventListener('mousemove', event => {
+      tip.textContent = node.dataset.tip;
+      tip.style.left = Math.min(event.clientX + 16, window.innerWidth - 330) + 'px';
+      tip.style.top = Math.min(event.clientY + 16, window.innerHeight - 90) + 'px';
+      tip.classList.add('show');
+    });
+    node.addEventListener('mouseleave', () => tip.classList.remove('show'));
+    node.addEventListener('focus', () => tip.classList.add('show'));
+  });
+</script>
+</body>
+</html>

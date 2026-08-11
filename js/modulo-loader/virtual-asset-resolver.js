@@ -209,7 +209,16 @@ function inlinearScriptsYEstilos(html, contenidoTextoPorRuta) {
     if (!m) return match; // script inline sin src: no toca nada
     const limpio = m[1].replace(/^\.?\//, '');
     if (!contenidoTextoPorRuta.has(limpio)) return match; // externo (http…) u otro: se deja igual
-    return `<script>${contenidoTextoPorRuta.get(limpio)}</script>`;
+    // Bug real corregido: se descartaban TODOS los atributos del <script>
+    // original al inlinearlo — un bundle ESM (Vite/webpack con salida
+    // `type="module"`, típico de React/Vue/etc.) reinsertado como script
+    // CLÁSICO revienta con SyntaxError silencioso en import/export (nunca
+    // llega a ejecutar, sin ningún error visible en la UI: el módulo
+    // simplemente nunca manda 'modulo:iniciado'). Se preserva type="module"
+    // si el original lo tenía — el resto de atributos (crossorigin, etc.)
+    // no aplica a un <script> inline y se descarta sin problema.
+    const esModulo = /type\s*=\s*["']module["']/i.test(atributos);
+    return `<script${esModulo ? ' type="module"' : ''}>${contenidoTextoPorRuta.get(limpio)}</script>`;
   });
   html = html.replace(/<link\s+([^>]*)>/gi, (match, atributos) => {
     if (!/rel\s*=\s*["']stylesheet["']/i.test(atributos)) return match;

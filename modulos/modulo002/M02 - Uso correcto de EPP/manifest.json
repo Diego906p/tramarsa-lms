@@ -1,0 +1,11 @@
+{
+  "version": 2,
+  "laminas": [
+    { "imagen": "img/Diapositiva01.png", "audio": "audio/audio1.mp3" },
+    { "imagen": "img/Diapositiva02.png", "audio": "audio/audio2.mp3" },
+    { "imagen": "img/Diapositiva03.png", "audio": "audio/audio3.mp3" },
+    { "imagen": "img/Diapositiva04.png", "audio": "audio/audio4.mp3" },
+    { "imagen": "img/Diapositiva05.png", "audio": "audio/audio5.mp3" },
+    { "imagen": "img/Diapositiva06.png", "audio": "audio/audio6.mp3" }
+  ]
+}

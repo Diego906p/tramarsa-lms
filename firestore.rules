@@ -1,41 +1,85 @@
-// TRAMARSA LMS — Reglas de Firestore
-//
-// Sin Cloud Functions ni Custom Claims (decisión del proyecto: todo
-// corre client-side), no hay forma de que estas reglas verifiquen de
-// forma confiable si la cuenta autenticada es ADMIN — ese dato vive en
-// un documento que el propio cliente puede escribir. El baseline es
-// "cualquier cuenta autenticada puede leer/escribir": bloquea acceso
-// público/anónimo, pero NO impide que una cuenta TRABAJADOR autenticada
-// llame a la API de Firestore directamente (fuera de la UI) para leer o
-// modificar datos de otros. Reforzar esto requiere Custom Claims
-// asignados por un Cloud Function/Admin SDK — pendiente, fuera del
-// alcance actual del proyecto.
-//
-// `usuarios` es la única excepción con lectura pública (sin
-// autenticar): el login por DNI necesita mapear DNI → correo ANTES de
-// poder autenticar con Firebase Auth, y las reglas no pueden distinguir
-// "es un login legítimo" de otra cosa. Expone nombre/DNI/correo/área
-// (no contraseñas: esas viven solo en Firebase Auth) — equivalente a un
-// directorio interno de la empresa.
-
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
+    function signedIn() { return request.auth != null; }
+    function bootstrapAdmin() {
+      return signedIn() && request.auth.token.email == 'diego906p@gmail.com';
+    }
+    function isAdmin() {
+      return bootstrapAdmin() || exists(/databases/$(database)/documents/administradores/$(request.auth.uid));
+    }
+    function isOwner(dni) {
+      return signedIn()
+        && exists(/databases/$(database)/documents/perfiles/$(request.auth.uid))
+        && get(/databases/$(database)/documents/perfiles/$(request.auth.uid)).data.dni == dni;
+    }
+    function isOwnerHistorial(historialId) {
+      return signedIn()
+        && exists(/databases/$(database)/documents/perfiles/$(request.auth.uid))
+        && historialId.matches('^' + get(/databases/$(database)/documents/perfiles/$(request.auth.uid)).data.dni + '_[A-Za-z0-9_-]+$');
+    }
+
+    // El primer administrador debe usar el correo de bootstrap. Después de
+    // crear su perfil se registra también en /administradores/{uid}.
+    match /administradores/{uid} {
+      allow get: if signedIn() && (uid == request.auth.uid || isAdmin());
+      allow list: if isAdmin();
+      allow create: if (bootstrapAdmin() && uid == request.auth.uid)
+        || (isAdmin() && request.resource.data.uid == uid);
+      allow update, delete: if isAdmin();
+    }
+
     match /usuarios/{dni} {
-      allow read: if true;
-      allow write: if request.auth != null;
+      allow get: if isAdmin() || isOwner(dni);
+      allow list: if isAdmin();
+      allow create: if isAdmin() || (bootstrapAdmin()
+        && request.resource.data.uid == request.auth.uid
+        && request.resource.data.rol == 'ADMIN');
+      // En el primer acceso el propio trabajador solo puede confirmar que
+      // reemplazó la contraseña inicial. No puede modificar su perfil ni
+      // reactivar esta marca después.
+      allow update: if isAdmin() || (isOwner(dni)
+        && resource.data.debeCambiarPassword == true
+        && request.resource.data.debeCambiarPassword == false
+        && request.resource.data.diff(resource.data).affectedKeys()
+          .hasOnly(['debeCambiarPassword']));
+      allow delete: if isAdmin();
     }
+
+    // Índice privado para restaurar la sesión desde Firebase Auth sin
+    // abrir consultas sobre todos los DNI/correos de la empresa.
+    match /perfiles/{uid} {
+      allow get: if signedIn() && (uid == request.auth.uid || isAdmin());
+      allow list: if isAdmin();
+      allow create: if isAdmin() || (bootstrapAdmin() && uid == request.auth.uid);
+      allow update, delete: if isAdmin();
+    }
+
     match /modulos/{moduloId} {
-      allow read, write: if request.auth != null;
+      allow read: if signedIn();
+      allow write: if isAdmin();
     }
+
     match /asignaciones/{asignacionId} {
-      allow read, write: if request.auth != null;
+      allow read: if isAdmin() || isOwner(resource.data.usuarioId);
+      allow create, update, delete: if isAdmin();
     }
+
     match /historial/{historialId} {
-      allow read, write: if request.auth != null;
+      // Al iniciar por primera vez el documento aún no existe. En ese caso
+      // no hay resource.data para autorizar el get, por lo que se valida el
+      // prefijo DNI del ID determinista "dni_modulo".
+      allow get: if isAdmin() || isOwnerHistorial(historialId);
+      allow list: if isAdmin() || isOwner(resource.data.usuarioId);
+      allow create: if isOwner(request.resource.data.usuarioId)
+        && request.resource.data.estado == 'EN_PROGRESO';
+      allow update: if isOwner(resource.data.usuarioId)
+        && request.resource.data.usuarioId == resource.data.usuarioId;
+      allow delete: if isAdmin();
     }
+
     match /configuracion/{docId} {
-      allow read, write: if request.auth != null;
+      allow read, write: if isAdmin();
     }
   }
 }

@@ -181,7 +181,7 @@ export class DriverLaminas {
     };
     if (cssModulo) cssModulo = await sustituirAssets(cssModulo);
 
-    const esqueletoSrcdoc = (fragmento) => `<!DOCTYPE html><html><head><meta charset="utf-8"><style>
+    const esqueletoSrcdoc = (fragmento) => `<!DOCTYPE html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data:; style-src 'unsafe-inline'; script-src 'unsafe-inline'; font-src data:;"><style>
 *{box-sizing:border-box}html,body{margin:0;padding:0;width:100%;height:100%;overflow:hidden;background:#111827}
 #lienzo{position:absolute;top:0;left:0;width:${lienzoAncho}px;height:${lienzoAlto}px;transform-origin:0 0;overflow:hidden;background:#fff}
 ${cssModulo}
@@ -323,10 +323,13 @@ ${cssModulo}
     } else {
       // Lámina sin audio: avance habilitado de inmediato.
       this.pausado = true;
+      this.callbacks.onAvance(i + 1, total);
     }
     this.renderControles();
     this.fijarBarra((i / total) * 100);
-    this.callbacks.onAvance(i + 1, total + 1);
+    // Mostrar una lámina no equivale a completarla. La persistencia del
+    // avance ocurre al terminar su audio para que no se pueda saltar la
+    // narración reanudando el módulo.
   }
 
   reproducir() {
@@ -359,6 +362,7 @@ ${cssModulo}
     this.maximoAlcanzado = Math.max(this.maximoAlcanzado, this.indiceActual);
     this.audioListoIndiceActual = true;
     this.fijarBarra(((this.indiceActual + 1) / total) * 100); // fin exacto
+    this.callbacks.onAvance(this.indiceActual + 1, total);
     const esUltima = this.indiceActual >= total - 1;
     if (this.autoplayActivo && !esUltima) {
       this.timeoutAutoAvance = setTimeout(() => this.mostrarLamina(this.indiceActual + 1, true), 600);

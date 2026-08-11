@@ -1,0 +1,308 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Flujo UX | LMS corporativo</title>
+  <style>
+    :root {
+      --navy: #092b70;
+      --blue: #0f5bff;
+      --teal: #00a8c8;
+      --ink: #17233f;
+      --muted: #6a7890;
+      --line: #dce5f2;
+      --surface: #ffffff;
+      --admin: #0f5bff;
+      --user: #00a8c8;
+      --system: #6b7280;
+      --success: #0b7a4b;
+      --warning: #a16207;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      color: var(--ink);
+      font-family: Arial, Helvetica, sans-serif;
+      background:
+        linear-gradient(140deg, rgba(9, 43, 112, .06), rgba(0, 168, 200, .08)),
+        #f7f9fd;
+    }
+
+    main {
+      width: min(1240px, calc(100% - 36px));
+      margin: 0 auto;
+      padding: 28px 0 50px;
+    }
+
+    header {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 24px;
+      align-items: center;
+      margin-bottom: 22px;
+      padding: 24px 28px;
+      color: #ffffff;
+      border-radius: 18px;
+      background:
+        radial-gradient(circle at 88% 0%, rgba(0, 168, 200, .42), transparent 20rem),
+        linear-gradient(135deg, #08265f, #0d48ae);
+      box-shadow: 0 22px 50px rgba(15, 38, 82, .16);
+    }
+
+    header img {
+      display: block;
+      width: 170px;
+      height: auto;
+    }
+
+    .eyebrow {
+      margin: 0 0 8px;
+      color: rgba(255, 255, 255, .72);
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: .14em;
+      text-transform: uppercase;
+    }
+
+    h1 {
+      margin: 0;
+      font-size: clamp(28px, 4.2vw, 46px);
+      line-height: 1.06;
+      letter-spacing: 0;
+    }
+
+    header p {
+      max-width: 780px;
+      margin: 12px 0 0;
+      color: rgba(255, 255, 255, .82);
+      font-size: 17px;
+    }
+
+    h2 {
+      margin: 0 0 14px;
+      color: var(--navy);
+      font-size: 24px;
+      line-height: 1.2;
+      letter-spacing: 0;
+    }
+
+    h3 {
+      margin: 0 0 8px;
+      color: var(--ink);
+      font-size: 17px;
+      line-height: 1.25;
+      letter-spacing: 0;
+    }
+
+    p { margin: 0; }
+
+    .legend {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-bottom: 18px;
+    }
+
+    .legend span {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 11px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      background: #ffffff;
+      color: var(--muted);
+      font-weight: 700;
+      font-size: 13px;
+    }
+
+    .dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: var(--system);
+    }
+
+    .dot.admin { background: var(--admin); }
+    .dot.user { background: var(--user); }
+    .dot.system { background: var(--system); }
+
+    .panel {
+      margin-top: 22px;
+      padding: 26px;
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      background: rgba(255, 255, 255, .94);
+      box-shadow: 0 14px 38px rgba(20, 44, 82, .08);
+    }
+
+    .flow {
+      display: grid;
+      grid-template-columns: 210px repeat(5, minmax(160px, 1fr));
+      gap: 12px;
+      align-items: stretch;
+      overflow-x: auto;
+      padding-bottom: 6px;
+    }
+
+    .lane-title {
+      position: sticky;
+      left: 0;
+      z-index: 2;
+      display: flex;
+      align-items: center;
+      min-width: 210px;
+      padding: 16px;
+      border-radius: 14px;
+      color: #ffffff;
+      font-weight: 800;
+      background: var(--navy);
+    }
+
+    .lane-title.admin { background: linear-gradient(135deg, #0d48ae, var(--admin)); }
+    .lane-title.user { background: linear-gradient(135deg, #007f9d, var(--user)); }
+    .lane-title.system { background: linear-gradient(135deg, #4b5563, #111827); }
+
+    .step {
+      min-width: 160px;
+      padding: 16px;
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      background: var(--surface);
+      position: relative;
+    }
+
+    .step::after {
+      content: "";
+      position: absolute;
+      right: -12px;
+      top: 50%;
+      width: 12px;
+      height: 2px;
+      background: #c7d4e6;
+    }
+
+    .step.last::after { display: none; }
+
+    .step small {
+      display: block;
+      margin-bottom: 8px;
+      color: var(--muted);
+      font-weight: 800;
+      font-size: 11px;
+      letter-spacing: .08em;
+      text-transform: uppercase;
+    }
+
+    .step.admin { border-top: 4px solid var(--admin); }
+    .step.user { border-top: 4px solid var(--user); }
+    .step.system { border-top: 4px solid var(--system); }
+    .step.ok { border-top-color: var(--success); }
+    .step.warn { border-top-color: var(--warning); }
+
+    .cards {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 14px;
+    }
+
+    .card {
+      padding: 18px;
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      background: #ffffff;
+    }
+
+    .card strong {
+      display: block;
+      margin-bottom: 6px;
+      color: var(--navy);
+      font-size: 16px;
+    }
+
+    .callout {
+      margin-top: 16px;
+      padding: 15px 17px;
+      border-left: 5px solid var(--blue);
+      border-radius: 12px;
+      background: #edf5ff;
+      color: #24415f;
+    }
+
+    .footer {
+      margin-top: 22px;
+      color: var(--muted);
+      text-align: center;
+      font-size: 13px;
+    }
+
+    @media (max-width: 900px) {
+      main { width: min(100% - 24px, 1240px); }
+      header { grid-template-columns: 1fr; padding: 24px 20px; }
+      .cards { grid-template-columns: 1fr; }
+      .panel { padding: 20px; }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <div>
+        <p class="eyebrow">Flujo de uso de la plataforma</p>
+        <h1>Experiencia del administrador y del usuario</h1>
+        <p>Vista de alto nivel para entender como se usa el LMS desde la configuracion inicial hasta la reproduccion del modulo, evaluacion, progreso y certificado.</p>
+      </div>
+      <img src="../assets/logo_tram_white.png" alt="Grupo Tramarsa">
+    </header>
+
+    <section class="panel">
+      <h2>Mapa UX principal</h2>
+      <div class="legend">
+        <span><i class="dot admin"></i>Administrador</span>
+        <span><i class="dot user"></i>Usuario</span>
+        <span><i class="dot system"></i>Sistema</span>
+      </div>
+
+      <div class="flow" role="img" aria-label="Flujo UX del LMS">
+        <div class="lane-title admin">Administrador</div>
+        <div class="step admin"><small>Ingreso</small><h3>Accede con DNI</h3><p>Usa sus credenciales y entra al panel administrativo.</p></div>
+        <div class="step admin"><small>Gestion</small><h3>Crea usuarios</h3><p>Registra DNI, correo, nombre, rol y datos necesarios.</p></div>
+        <div class="step admin"><small>Contenido</small><h3>Carga modulos</h3><p>Sube ZIP o RAR con HTML, CSS, JS, audios, imagenes y manifiesto.</p></div>
+        <div class="step admin"><small>Asignacion</small><h3>Asigna cursos</h3><p>Define que usuarios reciben cada modulo y que certificado aplica.</p></div>
+        <div class="step admin last"><small>Seguimiento</small><h3>Revisa avance</h3><p>Consulta progreso, completados, evaluaciones e historial.</p></div>
+
+        <div class="lane-title system">Sistema</div>
+        <div class="step system"><small>Auth</small><h3>Resuelve DNI</h3><p>El gateway convierte DNI a cuenta interna sin exponer datos sensibles.</p></div>
+        <div class="step system"><small>Datos</small><h3>Guarda perfil</h3><p>Firestore conserva usuarios, roles, asignaciones y configuracion.</p></div>
+        <div class="step system"><small>Archivos</small><h3>Protege modulos</h3><p>Cloudflare Worker accede al repositorio privado solo si el usuario tiene permiso.</p></div>
+        <div class="step system"><small>Control</small><h3>Gobierna avance</h3><p>El LMS controla audio, laminas, bloqueo de avance y registro de progreso.</p></div>
+        <div class="step system last"><small>Correo</small><h3>Recupera clave</h3><p>Envio corporativo con enlace seguro para restablecer contrasena.</p></div>
+
+        <div class="lane-title user">Usuario</div>
+        <div class="step user"><small>Ingreso</small><h3>Accede con DNI</h3><p>Inicia sesion con DNI y contrasena vigente.</p></div>
+        <div class="step user"><small>Inicio</small><h3>Ve sus modulos</h3><p>Solo aparecen capacitaciones asignadas a su perfil.</p></div>
+        <div class="step user"><small>Reproduccion</small><h3>Consume contenido</h3><p>Escucha audios, ve laminas y avanza segun controles del LMS.</p></div>
+        <div class="step user"><small>Evaluacion</small><h3>Responde prueba</h3><p>El resultado se registra en historial y condiciona finalizacion.</p></div>
+        <div class="step user last"><small>Cierre</small><h3>Obtiene certificado</h3><p>Descarga certificado personalizado cuando cumple las reglas.</p></div>
+      </div>
+    </section>
+
+    <section class="panel">
+      <h2>Momentos criticos de control</h2>
+      <div class="cards">
+        <div class="card"><strong>Acceso por rol</strong><p>El administrador gestiona usuarios y modulos. El usuario solo ve lo asignado a su DNI.</p></div>
+        <div class="card"><strong>Modulo protegido</strong><p>Los archivos no se exponen como carpeta publica; se solicitan por Worker con token Firebase.</p></div>
+        <div class="card"><strong>Reproductor gobernado</strong><p>El modulo aporta contenido, pero el LMS impone controles, avance, evaluacion e historial.</p></div>
+      </div>
+      <div class="callout">
+        Esta estructura permite generar modulos con IA siempre que respeten el contrato del LMS: contenido declarativo, audios vinculados y sin reemplazar los controles de seguridad de la plataforma.
+      </div>
+    </section>
+
+    <p class="footer">LMS corporativo | Flujo UX de administrador y usuario</p>
+  </main>
+</body>
+</html>

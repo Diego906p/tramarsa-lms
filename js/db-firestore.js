@@ -42,13 +42,37 @@ export async function obtenerUsuario(dni) {
   const snap = await getDoc(doc(dbase, 'usuarios', dni));
   return snap.exists() ? { id: snap.id, ...snap.data() } : null;
 }
+export async function obtenerUsuarioPorUid(uid) {
+  const dbase = verificarFirestore();
+  const perfil = await getDoc(doc(dbase, 'perfiles', uid));
+  if (!perfil.exists() || !perfil.data().dni) return null;
+  return obtenerUsuario(perfil.data().dni);
+}
 export async function crearUsuario(dni, datos) {
   const dbase = verificarFirestore();
-  await setDoc(doc(dbase, 'usuarios', dni), { ...datos, dni });
+  const usuario = { ...datos, dni };
+  const batch = writeBatch(dbase);
+  batch.set(doc(dbase, 'usuarios', dni), usuario);
+  if (datos.uid) batch.set(doc(dbase, 'perfiles', datos.uid), usuario);
+  if (datos.uid && datos.rol === 'ADMIN') {
+    batch.set(doc(dbase, 'administradores', datos.uid), {
+      uid: datos.uid, correo: datos.correo, creadoEn: new Date().toISOString()
+    });
+  }
+  await batch.commit();
   return { id: dni, ...datos, dni };
+}
+export async function registrarAdministrador(uid, correo) {
+  const dbase = verificarFirestore();
+  await setDoc(doc(dbase, 'administradores', uid), { uid, correo, creadoEn: new Date().toISOString() });
 }
 export async function actualizarUsuario(dni, datos) {
   const dbase = verificarFirestore();
+  const actual = await getDoc(doc(dbase, 'usuarios', dni));
+  if (!actual.exists()) throw new Error('El usuario no existe.');
+  // El perfil privado solo resuelve UID -> DNI durante el inicio de sesión.
+  // Mantenerlo inmutable evita que el trabajador requiera permiso para
+  // modificar una segunda copia de su ficha al cambiar la contraseña.
   await updateDoc(doc(dbase, 'usuarios', dni), datos);
 }
 // Borra el documento del usuario y sus asignaciones/historial en Firestore.
@@ -57,9 +81,11 @@ export async function actualizarUsuario(dni, datos) {
 // archivos de GitHub al eliminar un módulo): queda huérfana en Auth.
 export async function eliminarUsuario(dni) {
   const dbase = verificarFirestore();
+  const usuario = await getDoc(doc(dbase, 'usuarios', dni));
   const [asignaciones, historial] = await Promise.all([obtenerAsignacionesUsuario(dni), obtenerHistorialUsuario(dni)]);
   const batch = writeBatch(dbase);
   batch.delete(doc(dbase, 'usuarios', dni));
+  if (usuario.exists() && usuario.data().uid) batch.delete(doc(dbase, 'perfiles', usuario.data().uid));
   asignaciones.forEach(a => batch.delete(doc(dbase, 'asignaciones', a.id)));
   historial.forEach(h => batch.delete(doc(dbase, 'historial', h.id)));
   await batch.commit();
@@ -96,10 +122,14 @@ export async function actualizarModulo(moduloId, datos) {
 export async function eliminarModulo(moduloId) {
   const dbase = verificarFirestore();
   await deleteDoc(doc(dbase, 'modulos', moduloId));
-  // limpia también las asignaciones de ese módulo
-  const asignaciones = await obtenerAsignacionesDeModulo(moduloId);
+  // La eliminación es definitiva: evita asignaciones e historiales huérfanos.
+  const [asignaciones, historial] = await Promise.all([
+    obtenerAsignacionesDeModulo(moduloId),
+    obtenerColeccion('historial').then(items => items.filter(h => h.moduloId === moduloId))
+  ]);
   const batch = writeBatch(dbase);
   asignaciones.forEach(a => batch.delete(doc(dbase, 'asignaciones', a.id)));
+  historial.forEach(h => batch.delete(doc(dbase, 'historial', h.id)));
   await batch.commit();
 }
 

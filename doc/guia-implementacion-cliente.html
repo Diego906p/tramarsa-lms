@@ -1,0 +1,419 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Guia de implementacion | LMS corporativo</title>
+  <style>
+    :root {
+      --navy: #0b2d73;
+      --blue: #0f5bff;
+      --cyan: #00a6d6;
+      --ink: #17233f;
+      --muted: #66748a;
+      --line: #dbe3f0;
+      --success: #0b7a4b;
+      --warning: #986800;
+      --white: #ffffff;
+      --shadow: 0 22px 55px rgba(16, 35, 70, .14);
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      color: var(--ink);
+      font-family: Arial, Helvetica, sans-serif;
+      line-height: 1.5;
+      background:
+        radial-gradient(circle at 18% 0%, rgba(0, 166, 214, .18), transparent 28rem),
+        linear-gradient(180deg, #eef5ff 0%, #ffffff 30%, #f7f9fd 100%);
+    }
+
+    main {
+      width: min(1180px, calc(100% - 40px));
+      margin: 0 auto;
+      padding: 34px 0 56px;
+    }
+
+    .hero {
+      overflow: hidden;
+      border-radius: 18px;
+      color: var(--white);
+      background:
+        linear-gradient(130deg, rgba(11, 45, 115, .98), rgba(8, 63, 150, .94)),
+        url("../assets/logo_tram_white.png");
+      box-shadow: var(--shadow);
+    }
+
+    .hero-inner {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 26px;
+      align-items: center;
+      padding: 34px 38px;
+      background:
+        linear-gradient(90deg, rgba(11, 45, 115, .08), rgba(11, 45, 115, .92)),
+        radial-gradient(circle at 92% 0%, rgba(0, 166, 214, .38), transparent 18rem);
+    }
+
+    .brand {
+      width: 190px;
+      max-width: 42vw;
+      height: auto;
+      display: block;
+    }
+
+    .eyebrow {
+      margin: 0 0 10px;
+      letter-spacing: .14em;
+      text-transform: uppercase;
+      font-size: 12px;
+      opacity: .76;
+      font-weight: 700;
+    }
+
+    h1 {
+      max-width: 780px;
+      margin: 0;
+      font-size: clamp(30px, 4.8vw, 54px);
+      line-height: 1.02;
+      letter-spacing: 0;
+    }
+
+    .hero p {
+      max-width: 760px;
+      margin: 18px 0 0;
+      color: rgba(255, 255, 255, .82);
+      font-size: 18px;
+    }
+
+    h2 {
+      margin: 0 0 16px;
+      color: var(--navy);
+      font-size: 24px;
+      line-height: 1.18;
+      letter-spacing: 0;
+    }
+
+    h3 {
+      margin: 0 0 8px;
+      color: var(--ink);
+      font-size: 18px;
+      line-height: 1.25;
+      letter-spacing: 0;
+    }
+
+    p { margin: 0 0 12px; }
+
+    code {
+      padding: 2px 6px;
+      border: 1px solid #d5deec;
+      border-radius: 6px;
+      background: #f6f8fc;
+      color: #102653;
+      font-family: Consolas, "Courier New", monospace;
+      font-size: .92em;
+    }
+
+    .section {
+      margin-top: 28px;
+      padding: 28px;
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      background: rgba(255, 255, 255, .92);
+      box-shadow: 0 12px 34px rgba(30, 50, 90, .08);
+    }
+
+    .grid { display: grid; gap: 16px; }
+    .grid.cols-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .grid.cols-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+
+    .tile {
+      min-height: 100%;
+      padding: 18px;
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      background: #ffffff;
+    }
+
+    .tile strong {
+      display: block;
+      margin-bottom: 5px;
+      color: var(--navy);
+    }
+
+    .tag {
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      margin: 0 8px 8px 0;
+      padding: 6px 10px;
+      border-radius: 999px;
+      background: #eaf2ff;
+      color: var(--navy);
+      font-weight: 700;
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: .04em;
+    }
+
+    .tag.ok { background: #e7f7ef; color: var(--success); }
+    .tag.warn { background: #fff5da; color: var(--warning); }
+
+    .steps {
+      display: grid;
+      gap: 14px;
+      margin: 0;
+      padding: 0;
+      list-style: none;
+      counter-reset: step;
+    }
+
+    .steps li {
+      position: relative;
+      padding: 18px 18px 18px 62px;
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      background: #ffffff;
+    }
+
+    .steps li::before {
+      counter-increment: step;
+      content: counter(step);
+      position: absolute;
+      left: 18px;
+      top: 18px;
+      width: 30px;
+      height: 30px;
+      border-radius: 50%;
+      display: grid;
+      place-items: center;
+      color: #ffffff;
+      background: var(--blue);
+      font-weight: 800;
+    }
+
+    .table-wrap {
+      overflow-x: auto;
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      background: #ffffff;
+    }
+
+    table {
+      width: 100%;
+      min-width: 820px;
+      border-collapse: collapse;
+    }
+
+    th, td {
+      padding: 13px 14px;
+      border-bottom: 1px solid var(--line);
+      text-align: left;
+      vertical-align: top;
+    }
+
+    th {
+      color: var(--navy);
+      background: #eef4ff;
+      font-size: 13px;
+      text-transform: uppercase;
+      letter-spacing: .06em;
+    }
+
+    tr:last-child td { border-bottom: 0; }
+
+    .decision {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 18px;
+    }
+
+    .path {
+      padding: 20px;
+      border-radius: 16px;
+      border: 1px solid var(--line);
+      background: linear-gradient(180deg, #ffffff, #f7faff);
+    }
+
+    .path h3 { color: var(--navy); }
+
+    .callout {
+      padding: 16px 18px;
+      border-left: 5px solid var(--blue);
+      border-radius: 12px;
+      background: #edf5ff;
+      color: #24415f;
+    }
+
+    .callout.warning {
+      border-left-color: var(--warning);
+      background: #fff8e7;
+    }
+
+    .checklist {
+      display: grid;
+      gap: 10px;
+      margin: 0;
+      padding: 0;
+      list-style: none;
+    }
+
+    .checklist li {
+      position: relative;
+      padding-left: 30px;
+    }
+
+    .checklist li::before {
+      content: "";
+      position: absolute;
+      left: 0;
+      top: 4px;
+      width: 18px;
+      height: 18px;
+      border-radius: 50%;
+      background: var(--success);
+      box-shadow: inset 0 0 0 5px #dff4e9;
+    }
+
+    .footer {
+      margin-top: 28px;
+      color: var(--muted);
+      text-align: center;
+      font-size: 13px;
+    }
+
+    @media (max-width: 820px) {
+      main { width: min(100% - 24px, 1180px); padding-top: 18px; }
+      .hero-inner { grid-template-columns: 1fr; padding: 28px 22px; }
+      .grid.cols-2, .grid.cols-3, .decision { grid-template-columns: 1fr; }
+      .section { padding: 20px; }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <section class="hero" aria-label="Portada">
+      <div class="hero-inner">
+        <div>
+          <p class="eyebrow">Guia para clientes y receptores del proyecto</p>
+          <h1>Implementacion del LMS corporativo</h1>
+          <p>Documento de orientacion para que una empresa receptora identifique que necesita configurar, donde se cambian las variables y que decisiones debe tomar antes de publicar la plataforma.</p>
+        </div>
+        <img class="brand" src="../assets/logo_tram_white.png" alt="Grupo Tramarsa">
+      </div>
+    </section>
+
+    <section class="section">
+      <h2>Lectura rapida</h2>
+      <div>
+        <span class="tag ok">Sin servidor propio obligatorio</span>
+        <span class="tag ok">Compatible con Firebase Spark</span>
+        <span class="tag ok">Repositorio privado</span>
+        <span class="tag warn">Correo corporativo requiere dominio verificado</span>
+      </div>
+      <p>El LMS es una aplicacion web estatica. La interfaz se publica como HTML, CSS y JavaScript; la autenticacion y datos viven en Firebase; los paquetes de modulos viven en GitHub privado; Cloudflare Worker actua como gateway seguro para que el navegador nunca vea el token de GitHub.</p>
+      <div class="callout">
+        Para una demostracion se puede operar con dominios y remitentes de prueba. Para produccion, el cliente debe decidir si usara sus propios DNS, dominio web, dominio de correo y repositorio GitHub.
+      </div>
+    </section>
+
+    <section class="section">
+      <h2>Que debe entregar o decidir el cliente</h2>
+      <div class="grid cols-3">
+        <div class="tile"><strong>Dominio web</strong><p>Ejemplo: <code>lms.empresa.com</code>. Sirve para publicar la plataforma con una direccion corporativa.</p></div>
+        <div class="tile"><strong>DNS</strong><p>Permite apuntar el dominio web y verificar el dominio de correos si se usara un remitente corporativo.</p></div>
+        <div class="tile"><strong>Dominio de correo</strong><p>Ejemplo: <code>notificaciones.empresa.com</code>. Permite enviar recuperaciones con identidad corporativa.</p></div>
+        <div class="tile"><strong>GitHub</strong><p>Repositorio privado donde se guardan modulos, audios, imagenes y certificados.</p></div>
+        <div class="tile"><strong>Firebase</strong><p>Proyecto para usuarios, login, perfiles, asignaciones, historial y configuracion.</p></div>
+        <div class="tile"><strong>Cloudflare</strong><p>Worker gateway para proteger el token de GitHub y controlar el acceso a archivos privados.</p></div>
+      </div>
+    </section>
+
+    <section class="section">
+      <h2>Rutas de implementacion</h2>
+      <div class="decision">
+        <div class="path">
+          <h3>Cliente con dominio, DNS y correo propio</h3>
+          <p>Es la ruta recomendada para produccion.</p>
+          <ul class="checklist">
+            <li>Configurar dominio web del LMS.</li>
+            <li>Verificar dominio de correo en Resend u otro proveedor.</li>
+            <li>Actualizar origenes permitidos del Worker.</li>
+            <li>Usar remitente corporativo propio.</li>
+          </ul>
+        </div>
+        <div class="path">
+          <h3>Cliente sin dominio o en etapa demo</h3>
+          <p>Es suficiente para validar la propuesta y capacitar internamente.</p>
+          <ul class="checklist">
+            <li>Usar URL local o GitHub Pages para la interfaz.</li>
+            <li>Usar repositorio GitHub privado del proyecto.</li>
+            <li>Mantener Worker en subdominio <code>workers.dev</code>.</li>
+            <li>Usar remitente de prueba si no hay DNS disponible.</li>
+          </ul>
+        </div>
+      </div>
+    </section>
+
+    <section class="section">
+      <h2>Variables y archivos que se deben cambiar</h2>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Componente</th><th>Archivo o panel</th><th>Que se cambia</th><th>Ejemplo</th></tr></thead>
+          <tbody>
+            <tr><td>Firebase del cliente</td><td><code>.firebaserc</code> y <code>js/firebase-config.js</code></td><td>ID del proyecto, Auth Domain, API Key publica de Firebase y datos de app web.</td><td><code>empresa-lms</code></td></tr>
+            <tr><td>Reglas de datos</td><td><code>firestore.rules</code> y Firebase Console</td><td>Publicar reglas de seguridad en Firestore.</td><td><code>firebase deploy --only firestore:rules</code></td></tr>
+            <tr><td>Repositorio privado</td><td><code>worker/wrangler.toml</code></td><td>Owner, nombre de repo y rama donde se guardaran archivos.</td><td><code>GITHUB_OWNER</code>, <code>GITHUB_REPO</code></td></tr>
+            <tr><td>Gateway seguro</td><td><code>worker/wrangler.toml</code> y Cloudflare</td><td>URL publica del Worker, origenes permitidos y namespace KV.</td><td><code>PUBLIC_GATEWAY_URL</code>, <code>ALLOWED_ORIGINS</code></td></tr>
+            <tr><td>Secretos</td><td>Cloudflare Worker Secrets</td><td>Token GitHub, clave Resend y JSON de cuenta de servicio Firebase.</td><td><code>wrangler secret put GITHUB_TOKEN</code></td></tr>
+            <tr><td>Correo corporativo</td><td><code>worker/src/index.js</code> y Resend</td><td>Remitente, marca y dominio verificado para recuperacion de contrasena.</td><td><code>TRAMARSA LMS &lt;onboarding@resend.dev&gt;</code></td></tr>
+            <tr><td>URL del gateway en frontend</td><td><code>js/github-config.js</code></td><td>Endpoint del Worker que el navegador usara para archivos privados.</td><td><code>https://...workers.dev</code></td></tr>
+            <tr><td>Marca visual</td><td><code>assets/</code> e <code>index.html</code></td><td>Logo, isotipo, textos institucionales y portada.</td><td><code>assets/logo_tram_white.png</code></td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="section">
+      <h2>Secuencia recomendada de configuracion</h2>
+      <ol class="steps">
+        <li><h3>Crear infraestructura propia</h3><p>Crear proyecto Firebase, repositorio GitHub privado y cuenta Cloudflare. Si habra correo corporativo, verificar dominio en el proveedor de envio.</p></li>
+        <li><h3>Actualizar variables del proyecto</h3><p>Cambiar <code>.firebaserc</code>, <code>js/firebase-config.js</code>, <code>js/github-config.js</code> y <code>worker/wrangler.toml</code> con los datos del cliente.</p></li>
+        <li><h3>Configurar secretos del Worker</h3><p>Cargar <code>GITHUB_TOKEN</code>, <code>RESEND_API_KEY</code> y <code>FIREBASE_SERVICE_ACCOUNT_JSON</code> como secretos. Nunca deben guardarse en el navegador ni en el repositorio.</p></li>
+        <li><h3>Publicar reglas y gateway</h3><p>Desplegar reglas Firestore y publicar el Worker. Verificar que los origenes permitidos coincidan con la URL donde vive el LMS.</p></li>
+        <li><h3>Probar acceso inicial</h3><p>Crear o validar el administrador inicial, ingresar por DNI, crear usuario de prueba y confirmar recuperacion de contrasena.</p></li>
+        <li><h3>Probar modulo completo</h3><p>Cargar un modulo, asignarlo, reproducirlo como usuario, completar evaluacion y descargar certificado.</p></li>
+      </ol>
+    </section>
+
+    <section class="section">
+      <h2>Checklist antes de entregar a produccion</h2>
+      <div class="grid cols-2">
+        <ul class="checklist">
+          <li>Administrador inicial validado.</li>
+          <li>Login por DNI probado con credenciales correctas e incorrectas.</li>
+          <li>Usuario nuevo creado y contrasena actualizada.</li>
+          <li>Recuperacion de contrasena probada.</li>
+          <li>Modulo subido desde panel administrador.</li>
+          <li>Modulo visible desde cuenta usuario.</li>
+        </ul>
+        <ul class="checklist">
+          <li>Avance de presentacion controlado por el LMS.</li>
+          <li>Evaluacion y certificado probados.</li>
+          <li>Worker sin secretos en archivos locales.</li>
+          <li>Repositorio GitHub privado confirmado.</li>
+          <li>Reglas Firestore publicadas.</li>
+          <li>Origenes CORS limitados a URLs reales del LMS.</li>
+        </ul>
+      </div>
+      <div class="callout warning" style="margin-top:16px">
+        No se recomienda entregar el proyecto con claves descargadas en Escritorio, Descargas, chats o capturas. Los secretos deben vivir solo en Cloudflare Worker Secrets o en el panel del servicio correspondiente.
+      </div>
+    </section>
+
+    <p class="footer">LMS corporativo | Guia de implementacion para clientes receptores</p>
+  </main>
+</body>
+</html>

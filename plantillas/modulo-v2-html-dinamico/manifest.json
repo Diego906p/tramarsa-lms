@@ -1,0 +1,8 @@
+{
+  "version": 2,
+  "contenido": "contenido.html",
+  "lienzo": { "ancho": 1920, "alto": 1080 },
+  "laminas": [
+    {}, {}, {}, {}, {}, {}
+  ]
+}
