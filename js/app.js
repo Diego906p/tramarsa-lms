@@ -953,9 +953,11 @@ function renderPerfilTrabajador() {
       const credencial = EmailAuthProvider.credential(usuario.correo, actual);
       await reauthenticateWithCredential(auth.currentUser, credencial);
       await updatePassword(auth.currentUser, nueva);
-      await DB.actualizarUsuario(usuario.dni, { debeCambiarPassword: false });
-      usuario.debeCambiarPassword = false;
-      setSesion(usuario);
+      if (usuario.debeCambiarPassword) {
+        await DB.actualizarUsuario(usuario.dni, { debeCambiarPassword: false });
+        usuario.debeCambiarPassword = false;
+        setSesion(usuario);
+      }
       successBox.textContent = 'Contraseña actualizada correctamente.';
       successBox.classList.add('show');
       document.getElementById('formPerfilPassword').reset();

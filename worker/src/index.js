@@ -270,6 +270,18 @@ async function enviarCorreoCorporativo(correo, enlace, env) {
   });
   if (!respuesta.ok) throw new Error('Resend no pudo entregar el correo corporativo.');
 }
+async function enviarCorreoFirebaseNativo(correo, env) {
+  if (!env.FIREBASE_API_KEY) throw new Error('Firebase Auth no esta configurado para recuperacion nativa.');
+  const respuesta = await fetch(`https://identitytoolkit.googleapis.com/v1/accounts:sendOobCode?key=${env.FIREBASE_API_KEY}`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      requestType: 'PASSWORD_RESET',
+      email: correo
+    })
+  });
+  if (!respuesta.ok) throw new Error('Firebase no pudo enviar el correo nativo de recuperacion.');
+}
 async function leerJson(request) {
   try { return await request.json(); }
   catch (_) { throw new Error('La solicitud no contiene JSON válido.'); }
@@ -304,7 +316,12 @@ async function solicitarResetPorDni(request, env) {
       // de la cuenta. El correo nativo conserva la recuperaciÃ³n operativa
       // hasta que se verifique un dominio corporativo.
       console.error('No se enviÃ³ el correo corporativo:', error.message);
-      return json({ error: 'No se pudo enviar el correo corporativo de recuperacion. Revisa la configuracion de Resend.' }, 502);
+      try {
+        await enviarCorreoFirebaseNativo(registro.correo, env);
+      } catch (fallbackError) {
+        console.error('No se envio el correo nativo:', fallbackError.message);
+        return json({ error: 'No se pudo enviar el enlace de recuperacion.' }, 502);
+      }
     }
   }
   return new Response(null, { status: 204 });
