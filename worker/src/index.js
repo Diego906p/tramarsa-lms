@@ -304,10 +304,7 @@ async function solicitarResetPorDni(request, env) {
       // de la cuenta. El correo nativo conserva la recuperaciÃ³n operativa
       // hasta que se verifique un dominio corporativo.
       console.error('No se enviÃ³ el correo corporativo:', error.message);
-      await fetch(`https://identitytoolkit.googleapis.com/v1/accounts:sendOobCode?key=${env.FIREBASE_API_KEY}`, {
-        method: 'POST', headers: { 'content-type': 'application/json', 'X-Firebase-Locale': 'es' },
-        body: JSON.stringify({ requestType: 'PASSWORD_RESET', email: registro.correo })
-      });
+      return json({ error: 'No se pudo enviar el correo corporativo de recuperacion. Revisa la configuracion de Resend.' }, 502);
     }
   }
   return new Response(null, { status: 204 });
